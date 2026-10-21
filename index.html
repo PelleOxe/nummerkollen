@@ -125,7 +125,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.06';
+const VERSION='1.07';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -250,7 +250,7 @@ function analyse(){
   const nums=[...map.keys()].sort((a,b)=>a-b);
   $('out').hidden=false;
   $('catname').textContent='Katalog: '+lastName;
-  $('stat').innerHTML=[`${matched} filer med nummer`,`${nums.length} olika nummer`,skippedList.length?`${skippedList.length} bild(er) utan nummer+komma ignorerade`:''].filter(Boolean).map(t=>`<span class="pill">${t}</span>`).join('');
+  $('stat').innerHTML=[`${matched} filer med nummer`,`${nums.length} olika nummer`,nums.length?`Lägsta: ${nums[0]}`:'',nums.length?`Högsta: ${nums[nums.length-1]}`:'',skippedList.length?`${skippedList.length} bild(er) utan nummer+komma ignorerade`:''].filter(Boolean).map(t=>`<span class="pill">${t}</span>`).join('');
 
   const dups=nums.filter(n=>map.get(n).length>1);
   $('dups').innerHTML=dups.length?dups.map(n=>`<div class="dup"><button class="num" data-n="${n}" title="Kopiera ${n}">${n}</button> <span class="muted">(${map.get(n).length} filer)</span><div>${map.get(n).map(esc).join('<br>')}</div></div>`).join(''):'<span class="chip ok">Inga dubbletter</span>';
