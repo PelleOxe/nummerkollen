@@ -49,6 +49,10 @@ button.num:hover{outline:2px solid var(--warn)}
 button.num.done{background:var(--okbg);color:var(--ok)}
 .ign{padding:5px 0;border-top:1px solid var(--line);font-size:.9rem;word-break:break-all}
 .ign:first-child{border-top:0}
+.seg{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.scroll{max-height:460px;overflow:auto}
+mark{background:var(--okbg);color:var(--ok);border-radius:3px;padding:0 2px}
 .dup{border-top:1px solid var(--line);padding:8px 0}
 .dup:first-child{border-top:0}
 .dup b{font-variant-numeric:tabular-nums}
@@ -107,6 +111,16 @@ dialog::backdrop{background:#0008}
  </div>
  <div class="col">
   <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Årtal i filnamn</h2><button id="cpyear">Kopiera</button></div>
+    <p class="muted small" style="margin:6px 0 0">Kontrollerar texten efter sista kommat. Rätt format: <i>1984, c1984, 1980t, c1980t, 1970-1990, 1970t-1990t</i>, text inom parenteser ( ) ignoreras, samt med förord: <i>före 1884, innan 1935, efter 1975, sent 1890t, mitten 1960t, tidigt 1980t</i>.</p>
+    <div class="seg" id="seg">
+      <button data-c="none">Inget årtal <b id="cn"></b></button>
+      <button data-c="inner">Årtal inne i namnet <b id="ci"></b></button>
+      <button data-c="ok">Rätt årtal i slutet <b id="ck"></b></button>
+    </div>
+    <div class="scroll" id="yearList"></div>
+  </div>
+  <div class="card">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Ignorerade bildfiler <span class="muted" id="ignN"></span></h2><button id="cpign">Kopiera</button></div>
     <p class="muted small" style="margin:6px 0 8px">jpg/png-filer vars namn inte börjar med tal + komma.</p>
     <div id="ign"></div>
@@ -125,7 +139,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.07';
+const VERSION='1.11';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -236,15 +250,64 @@ function ranges(a){
   const r=[];for(let i=0;i<a.length;){let j=i;while(j+1<a.length&&a[j+1]===a[j]+1)j++;r.push(j>i?a[i]+'–'+a[j]:''+a[i]);i=j+1}
   return r;
 }
-let dupText='',missText='',ignText='';
+let dupText='',missText='',ignText='',yearText='';
+let yearGroups={none:[],inner:[],ok:[]},yearSel='none';
+const YEAR_END=/^(?:(?:före|innan|efter|sent|mitten|tidigt)\s+)?(c)?(\d{4})(t)?(?:\s*[-–]\s*(c)?(\d{4})(t)?)?$/i;
+const YEAR_IN=/(^|[^\d])(1[4-9]\d\d|20\d\d)(?!\d)/g;
+const yOk=y=>y>=1400&&y<=2099;
+function markUp(path,name,ranges){
+  const off=path.length-name.length,items=[];
+  const nm=/^(\s*)(\d+)/.exec(name);
+  if(nm)items.push([off+nm[1].length,off+nm[1].length+nm[2].length,'num',nm[2]]);
+  ranges.forEach(r=>items.push([r[0]+off,r[1]+off,'mark']));
+  items.sort((x,y)=>x[0]-y[0]);
+  let h='',pos=0;
+  for(const [st,en,type,digits] of items){
+    h+=esc(path.slice(pos,st));
+    const t=esc(path.slice(st,en));
+    h+=type==='num'?`<button class="num" data-n="${parseInt(digits,10)}" title="Kopiera ${parseInt(digits,10)}">${t}</button>`:`<mark>${t}</mark>`;
+    pos=en;
+  }
+  return h+esc(path.slice(pos));
+}
+function maskParen(t){ // text inom parenteser ignoreras (ersätts med blanksteg, samma längd)
+  const re=/\([^()]*\)/g;
+  while(re.test(t)){re.lastIndex=0;t=t.replace(re,m=>' '.repeat(m.length));re.lastIndex=0}
+  return t;
+}
+function classify(f){
+  const name=f.name,base=maskParen(name.replace(/\.(jpe?g|png)$/i,''));
+  const first=base.indexOf(','),last=base.lastIndexOf(',');
+  const raw=base.slice(last+1),tail=raw.trim();
+  const m=YEAR_END.exec(tail);
+  if(m){
+    const a=+m[2],b=m[5]?+m[5]:a;
+    if(yOk(a)&&yOk(b)&&a<=b){
+      const st=last+1+raw.indexOf(tail);
+      return {cat:'ok',html:markUp(f.path,name,[[st,st+tail.length]])};
+    }
+  }
+  const rest=base.slice(first+1),ranges=[];let x;YEAR_IN.lastIndex=0;
+  while((x=YEAR_IN.exec(rest))){const st=first+1+x.index+x[1].length;ranges.push([st,st+4])}
+  if(ranges.length)return {cat:'inner',html:markUp(f.path,name,ranges)};
+  return {cat:'none',html:markUp(f.path,name,[])};
+}
+function renderYears(){
+  const g=yearGroups;
+  $('cn').textContent='('+g.none.length+')';$('ci').textContent='('+g.inner.length+')';$('ck').textContent='('+g.ok.length+')';
+  document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.c===yearSel));
+  const list=g[yearSel];
+  $('yearList').innerHTML=list.length?list.map(x=>`<div class="ign">${x.html}</div>`).join(''):'<span class="chip ok">Inga filer i den här gruppen</span>';
+  yearText=list.map(x=>x.path).join('\n');
+}
 
 function analyse(){
-  const map=new Map();let matched=0;const skippedList=[];
+  const map=new Map();let matched=0;const skippedList=[];yearGroups={none:[],inner:[],ok:[]};
   for(const f of lastFiles){
     if(!$('sub').checked&&f.path.includes('/'))continue;
     const m=FILE_RE.exec(f.name);
     if(!m){if(/\.(jpe?g|png)$/i.test(f.name))skippedList.push(f.path);continue}
-    matched++;const n=parseInt(m[1],10);
+    matched++;const n=parseInt(m[1],10);const c=classify(f);yearGroups[c.cat].push({n,path:f.path,html:c.html});
     if(!map.has(n))map.set(n,[]);map.get(n).push(f.path);
   }
   const nums=[...map.keys()].sort((a,b)=>a-b);
@@ -255,6 +318,8 @@ function analyse(){
   const dups=nums.filter(n=>map.get(n).length>1);
   $('dups').innerHTML=dups.length?dups.map(n=>`<div class="dup"><button class="num" data-n="${n}" title="Kopiera ${n}">${n}</button> <span class="muted">(${map.get(n).length} filer)</span><div>${map.get(n).map(esc).join('<br>')}</div></div>`).join(''):'<span class="chip ok">Inga dubbletter</span>';
   dupText=dups.join('\n');
+  Object.values(yearGroups).forEach(l=>l.sort((a,b)=>a.n-b.n||a.path.localeCompare(b.path,'sv')));
+  renderYears();
   skippedList.sort((a,b)=>a.localeCompare(b,'sv'));
   ignText=skippedList.join('\n');
   $('ignN').textContent='('+skippedList.length+')';
@@ -277,11 +342,18 @@ $('miss').onclick=e=>{
   const old=b.textContent;
   navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
 };
+$('yearList').onclick=e=>{
+  const b=e.target.closest('button.num');if(!b)return;
+  const old=b.textContent;
+  navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
+};
 $('dups').onclick=e=>{
   const b=e.target.closest('button.num');if(!b)return;
   const old=b.textContent;
   navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
 };
+$('seg').onclick=e=>{const b=e.target.closest('button');if(!b)return;yearSel=b.dataset.c;renderYears()};
+$('cpyear').onclick=e=>copy(yearText,e.target);
 $('cpign').onclick=e=>copy(ignText,e.target);
 $('cpdup').onclick=e=>copy(dupText,e.target);
 $('cpmiss').onclick=e=>copy(missText,e.target);
