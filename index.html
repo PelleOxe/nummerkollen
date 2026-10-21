@@ -11,6 +11,7 @@
 :root{--bg:#f4f6fa;--card:#fff;--text:#1b2230;--muted:#667085;--line:#dde3ee;--accent:#2563eb;--warn:#c2410c;--warnbg:#fff1e6;--okbg:#e8f5ec;--ok:#1a7f37}
 :root[data-theme="dark"]{--bg:#12151c;--card:#1b2029;--text:#e7ebf3;--muted:#9aa4b5;--line:#2c3442;--accent:#5b8def;--warn:#ffb072;--warnbg:#3a2616;--okbg:#14301e;--ok:#5fd07f}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:1200px;margin:0 auto;padding:16px}
@@ -124,7 +125,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.05';
+const VERSION='1.06';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
