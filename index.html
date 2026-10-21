@@ -20,7 +20,13 @@ h1{font-size:1.5rem;margin:0}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:14px}
 button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--text);padding:9px 14px;border-radius:9px}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button{box-shadow:0 3px 0 var(--line);transition:transform .08s,box-shadow .08s,filter .1s;position:relative}
+button.primary{box-shadow:0 3px 0 rgba(0,0,0,.35)}
 button:hover{filter:brightness(.95)}
+button:active:not(:disabled){transform:translateY(3px);box-shadow:0 0 0 transparent}
+button:disabled{opacity:.6;cursor:default}
+.spin{width:20px;height:20px;border:3px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:rot .7s linear infinite;display:inline-block}
+@keyframes rot{to{transform:rotate(360deg)}}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 label{display:flex;gap:6px;align-items:center}
 input[type=number]{width:110px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
@@ -69,6 +75,7 @@ dialog::backdrop{background:#0008}
   <div class="row">
     <button class="primary" id="pick">Välj katalog…</button>
     <button id="refresh" hidden>↻ Uppdatera listan</button>
+    <span class="spin" id="spin" hidden></span><span class="muted small" id="busyTxt" hidden></span>
     <label><input type="checkbox" id="sub"> Inkludera undermappar</label>
   </div>
   <div class="row" style="margin-top:10px">
@@ -117,7 +124,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.04';
+const VERSION='1.05';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -141,9 +148,22 @@ $('theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?
 const FILE_RE=/^\s*(\d+)\s*,.*\.(jpe?g|png)$/i;
 let lastFiles=null,lastName='',dirHandle=null;
 
+let scanCount=0;
+async function busy(fn){
+  const t0=Date.now();
+  $('spin').hidden=false;$('busyTxt').hidden=false;$('busyTxt').textContent='Läser katalogen…';
+  $('pick').disabled=$('refresh').disabled=true;
+  await new Promise(r=>setTimeout(r,30));
+  try{await fn()}
+  finally{
+    const w=450-(Date.now()-t0);if(w>0)await new Promise(r=>setTimeout(r,w));
+    $('spin').hidden=true;$('busyTxt').hidden=true;
+    $('pick').disabled=$('refresh').disabled=false;
+  }
+}
 async function walk(dir,rec,out,prefix){
   for await(const [name,h] of dir.entries()){
-    if(h.kind==='file')out.push({name,path:prefix+name});
+    if(h.kind==='file'){out.push({name,path:prefix+name});if(++scanCount%250===0)$('busyTxt').textContent='Läser katalogen… '+scanCount+' filer'}
     else if(rec)await walk(h,rec,out,prefix+name+'/');
   }
 }
@@ -154,8 +174,10 @@ async function kvSet(k,v){try{const db=await idb();await new Promise((res,rej)=>
 async function kvGet(k){try{const db=await idb();return await new Promise((res,rej)=>{const r=db.transaction('kv').objectStore('kv').get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}catch(e){return null}}
 
 async function scanHandle(){
-  const files=[];await walk(dirHandle,$('sub').checked,files,'');
-  lastFiles=files;lastName=dirHandle.name;analyse();
+  await busy(async()=>{
+    const files=[];scanCount=0;await walk(dirHandle,$('sub').checked,files,'');
+    lastFiles=files;lastName=dirHandle.name;analyse();
+  });
 }
 async function hasPerm(ask){
   const o={mode:'read'};
@@ -182,10 +204,13 @@ $('refresh').onclick=async()=>{
 };
 $('fallback').onchange=e=>{
   const all=[...e.target.files];if(!all.length)return;
-  lastName=all[0].webkitRelativePath.split('/')[0];
-  lastFiles=all.map(f=>({name:f.name,path:f.webkitRelativePath.split('/').slice(1).join('/')}));
+  e.target.value='';
   $('refresh').hidden=false;
-  e.target.value='';analyse();
+  busy(async()=>{
+    lastName=all[0].webkitRelativePath.split('/')[0];
+    lastFiles=all.map(f=>({name:f.name,path:f.webkitRelativePath.split('/').slice(1).join('/')}));
+    analyse();
+  });
 };
 $('sub').onchange=async()=>{
   try{localStorage.setItem('nk-sub',$('sub').checked?'1':'')}catch(e){}
