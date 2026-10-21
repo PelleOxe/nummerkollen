@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nummerkollen</title>
+<meta name="theme-color" content="#2563eb">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232563eb'/%3E%3Ctext x='50' y='68' font-size='56' font-family='Arial' font-weight='bold' text-anchor='middle' fill='white'%3E1,2%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%232563eb'/%3E%3Ctext x='50' y='68' font-size='56' font-family='Arial' font-weight='bold' text-anchor='middle' fill='white'%3E1,2%3C/text%3E%3C/svg%3E">
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--text:#1b2230;--muted:#667085;--line:#dde3ee;--accent:#2563eb;--warn:#c2410c;--warnbg:#fff1e6;--okbg:#e8f5ec;--ok:#1a7f37}
+:root[data-theme="dark"]{--bg:#12151c;--card:#1b2029;--text:#e7ebf3;--muted:#9aa4b5;--line:#2c3442;--accent:#5b8def;--warn:#ffb072;--warnbg:#3a2616;--okbg:#14301e;--ok:#5fd07f}
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:16px}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+h1{font-size:1.5rem;margin:0}
+.ver{color:var(--muted);font-size:.8rem;font-weight:400;margin-left:6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:14px}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--text);padding:9px 14px;border-radius:9px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button:hover{filter:brightness(.95)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+label{display:flex;gap:6px;align-items:center}
+input[type=number]{width:110px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+.stat{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+.pill{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:.9rem}
+h2{font-size:1.1rem;margin:0 0 8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{background:var(--warnbg);color:var(--warn);border-radius:7px;padding:2px 9px;font-variant-numeric:tabular-nums}
+.chip.ok{background:var(--okbg);color:var(--ok)}
+button.chip{border:0;cursor:pointer;font:inherit;font-size:.95rem}
+button.chip:hover{outline:2px solid var(--warn)}
+button.chip.done{background:var(--okbg);color:var(--ok)}
+#saved{margin:10px 0 0}
+.dup{border-top:1px solid var(--line);padding:8px 0}
+.dup:first-child{border-top:0}
+.dup b{font-variant-numeric:tabular-nums}
+.dup div{color:var(--muted);font-size:.88rem;word-break:break-all}
+.muted{color:var(--muted)}
+footer{text-align:center;color:var(--muted);font-size:.85rem;padding:24px 0 8px}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text);max-width:340px;text-align:center}
+dialog::backdrop{background:#0008}
+#qr{width:240px;height:240px;image-rendering:pixelated;background:#fff;padding:8px;border-radius:8px}
+.small{font-size:.85rem;word-break:break-all}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Nummerkollen<span class="ver" id="ver"></span></h1>
+  <div class="row">
+    <button id="share">Dela app</button>
+    <button id="theme" aria-label="Växla tema">🌓</button>
+  </div>
+</header>
+
+<div class="card">
+  <p style="margin-top:0">Välj en katalog. Appen läser alla <b>jpg</b>- och <b>png</b>-filer vars namn börjar med ett tal följt av komma, t.ex. <i>2654, hej kalle.jpg</i>.</p>
+  <div class="row">
+    <button class="primary" id="pick">Välj katalog…</button>
+    <button id="refresh" hidden>↻ Uppdatera listan</button>
+    <label><input type="checkbox" id="sub"> Inkludera undermappar</label>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label>Från <input type="number" id="from" min="0" placeholder="lägsta"></label>
+    <label>Till <input type="number" id="to" min="0" placeholder="högsta"></label>
+    <span class="muted small">Tomt = lägsta/högsta funna nummer</span>
+  </div>
+  <p class="muted small" id="saved" hidden></p>
+  <input type="file" id="fallback" webkitdirectory multiple hidden>
+</div>
+
+<div id="out" hidden>
+  <div class="card">
+    <h2 id="catname"></h2>
+    <div class="stat" id="stat"></div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Dubbletter</h2><button id="cpdup">Kopiera</button></div>
+    <div id="dups" style="margin-top:8px"></div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Saknade nummer</h2><button id="cpmiss">Kopiera</button></div>
+    <p class="muted small" id="rangeTxt" style="margin:6px 0"></p>
+    <p class="muted small" style="margin:0 0 8px">Klicka på ett nummer för att kopiera det (vid en följd kopieras det lägsta).</p>
+    <div class="chips" id="miss"></div>
+  </div>
+</div>
+
+<footer>© <span id="yr"></span> Per Andersson</footer>
+</div>
+
+<dialog id="dlg">
+  <h2>Dela app</h2>
+  <canvas id="qr" width="240" height="240"></canvas>
+  <p class="small" id="url"></p>
+  <button id="close">Stäng</button>
+</dialog>
+
+<script>
+const VERSION='1.03';
+const $=id=>document.getElementById(id);
+$('ver').textContent='v'+VERSION;
+$('yr').textContent=new Date().getFullYear();
+
+/* ---------- PWA ---------- */
+const manifest={name:'Nummerkollen',short_name:'Nummerkollen',start_url:'./',display:'standalone',background_color:'#2563eb',theme_color:'#2563eb',
+ icons:[{src:"data:image/svg+xml,"+encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='#2563eb'/><text x='50' y='68' font-size='56' font-family='Arial' font-weight='bold' text-anchor='middle' fill='white'>1,2</text></svg>"),sizes:'any',type:'image/svg+xml',purpose:'any maskable'}]};
+const ml=document.createElement('link');ml.rel='manifest';
+ml.href='data:application/manifest+json,'+encodeURIComponent(JSON.stringify(manifest));
+document.head.appendChild(ml);
+// Service worker behövs bara vid hostning (http/https); lokalt som fil hoppas det över.
+if('serviceWorker' in navigator&&/^https?:/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+/* ---------- Tema ---------- */
+function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('nk-theme',t)}catch(e){}}
+let saved=null;try{saved=localStorage.getItem('nk-theme')}catch(e){}
+setTheme(saved||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+$('theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+
+/* ---------- Analys ---------- */
+const FILE_RE=/^\s*(\d+)\s*,.*\.(jpe?g|png)$/i;
+let lastFiles=null,lastName='',dirHandle=null;
+
+async function walk(dir,rec,out,prefix){
+  for await(const [name,h] of dir.entries()){
+    if(h.kind==='file')out.push({name,path:prefix+name});
+    else if(rec)await walk(h,rec,out,prefix+name+'/');
+  }
+}
+
+/* ---- Spara katalogen (IndexedDB) ---- */
+function idb(){return new Promise((res,rej)=>{const r=indexedDB.open('nummerkollen',1);r.onupgradeneeded=()=>r.result.createObjectStore('kv');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function kvSet(k,v){try{const db=await idb();await new Promise((res,rej)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').put(v,k);t.oncomplete=res;t.onerror=()=>rej(t.error)})}catch(e){}}
+async function kvGet(k){try{const db=await idb();return await new Promise((res,rej)=>{const r=db.transaction('kv').objectStore('kv').get(k);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}catch(e){return null}}
+
+async function scanHandle(){
+  const files=[];await walk(dirHandle,$('sub').checked,files,'');
+  lastFiles=files;lastName=dirHandle.name;analyse();
+}
+async function hasPerm(ask){
+  const o={mode:'read'};
+  if(await dirHandle.queryPermission(o)==='granted')return true;
+  return ask&&(await dirHandle.requestPermission(o))==='granted';
+}
+
+$('pick').onclick=async()=>{
+  if(window.showDirectoryPicker){
+    try{
+      dirHandle=await window.showDirectoryPicker();
+      await kvSet('dir',dirHandle);
+      $('refresh').hidden=false;$('saved').hidden=true;
+      await scanHandle();
+    }catch(e){if(e.name!=='AbortError')alert('Kunde inte läsa katalogen: '+e.message)}
+  }else $('fallback').click();
+};
+$('refresh').onclick=async()=>{
+  if(!dirHandle){$('fallback').click();return}
+  try{
+    if(!(await hasPerm(true))){alert('Åtkomst till katalogen nekades.');return}
+    $('saved').hidden=true;await scanHandle();
+  }catch(e){alert('Kunde inte läsa katalogen: '+e.message+'\nVälj katalogen igen.')}
+};
+$('fallback').onchange=e=>{
+  const all=[...e.target.files];if(!all.length)return;
+  lastName=all[0].webkitRelativePath.split('/')[0];
+  lastFiles=all.map(f=>({name:f.name,path:f.webkitRelativePath.split('/').slice(1).join('/')}));
+  $('refresh').hidden=false;
+  e.target.value='';analyse();
+};
+$('sub').onchange=async()=>{
+  try{localStorage.setItem('nk-sub',$('sub').checked?'1':'')}catch(e){}
+  if(dirHandle&&lastFiles&&await hasPerm(false))scanHandle();
+  else if(lastFiles)analyse();
+};
+try{$('sub').checked=!!localStorage.getItem('nk-sub')}catch(e){}
+
+/* ---- Återställ senast valda katalog vid start ---- */
+(async()=>{
+  if(!window.showDirectoryPicker)return;
+  const h=await kvGet('dir');if(!h)return;
+  dirHandle=h;$('refresh').hidden=false;
+  try{
+    if(await hasPerm(false))await scanHandle();
+    else{$('saved').hidden=false;$('saved').textContent='Sparad katalog: '+h.name+' – klicka på "Uppdatera listan" för att läsa den igen.'}
+  }catch(e){}
+})();
+['from','to'].forEach(id=>$(id).oninput=()=>{if(lastFiles)analyse()});
+
+function ranges(a){
+  const r=[];for(let i=0;i<a.length;){let j=i;while(j+1<a.length&&a[j+1]===a[j]+1)j++;r.push(j>i?a[i]+'–'+a[j]:''+a[i]);i=j+1}
+  return r;
+}
+let dupText='',missText='';
+
+function analyse(){
+  const map=new Map();let matched=0,skipped=0;
+  for(const f of lastFiles){
+    if(!$('sub').checked&&f.path.includes('/'))continue;
+    const m=FILE_RE.exec(f.name);
+    if(!m){if(/\.(jpe?g|png)$/i.test(f.name))skipped++;continue}
+    matched++;const n=parseInt(m[1],10);
+    if(!map.has(n))map.set(n,[]);map.get(n).push(f.path);
+  }
+  const nums=[...map.keys()].sort((a,b)=>a-b);
+  $('out').hidden=false;
+  $('catname').textContent='Katalog: '+lastName;
+  $('stat').innerHTML=[`${matched} filer med nummer`,`${nums.length} olika nummer`,skipped?`${skipped} bild(er) utan nummer+komma ignorerade`:''].filter(Boolean).map(t=>`<span class="pill">${t}</span>`).join('');
+
+  const dups=nums.filter(n=>map.get(n).length>1);
+  $('dups').innerHTML=dups.length?dups.map(n=>`<div class="dup"><b>${n}</b> <span class="muted">(${map.get(n).length} filer)</span><div>${map.get(n).map(esc).join('<br>')}</div></div>`).join(''):'<span class="chip ok">Inga dubbletter</span>';
+  dupText=dups.join('\n');
+
+  const missing=[];
+  if(nums.length){
+    const lo=$('from').value!==''?+$('from').value:nums[0];
+    const hi=$('to').value!==''?+$('to').value:nums[nums.length-1];
+    $('rangeTxt').textContent=`Kontrollerat intervall: ${lo}–${hi}`;
+    for(let n=lo;n<=hi;n++)if(!map.has(n))missing.push(n);
+  }else $('rangeTxt').textContent='Inga matchande filer hittades.';
+  $('miss').innerHTML=missing.length?ranges(missing).map(r=>`<button class="chip" data-n="${parseInt(r,10)}" title="Kopiera ${parseInt(r,10)}">${r}</button>`).join(''):(nums.length?'<span class="chip ok">Inga nummer saknas</span>':'');
+  missText=missing.join('\n');
+}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function copy(t,btn){navigator.clipboard.writeText(t).then(()=>{const o=btn.textContent;btn.textContent='Kopierat ✓';setTimeout(()=>btn.textContent=o,1200)})}
+$('miss').onclick=e=>{
+  const b=e.target.closest('button.chip');if(!b)return;
+  const old=b.textContent;
+  navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
+};
+$('cpdup').onclick=e=>copy(dupText,e.target);
+$('cpmiss').onclick=e=>copy(missText,e.target);
+
+/* ---------- Dela app (QR) ---------- */
+function makeQR(text){
+  const utf=[...new TextEncoder().encode(text)];
+  const ECC=[7,10,15,20,26,18,20,24,30,18],BLK=[1,1,1,1,1,2,2,2,2,4];
+  const raw=v=>{let r=(16*v+128)*v+64;if(v>=2){const a=Math.floor(v/7)+2;r-=(25*a-10)*a-55;if(v>=7)r-=36}return r};
+  let ver=1;
+  for(;ver<=10;ver++){const dc=Math.floor(raw(ver)/8)-ECC[ver-1]*BLK[ver-1];if(4+(ver<10?8:16)+8*utf.length<=dc*8)break}
+  if(ver>10)return null;
+  const rawCw=Math.floor(raw(ver)/8),nb=BLK[ver-1],ec=ECC[ver-1],dcTotal=rawCw-ec*nb;
+  const bits=[];const put=(v,n)=>{for(let i=n-1;i>=0;i--)bits.push((v>>i)&1)};
+  put(4,4);put(utf.length,ver<10?8:16);utf.forEach(b=>put(b,8));
+  put(0,Math.min(4,dcTotal*8-bits.length));while(bits.length%8)bits.push(0);
+  const data=[];for(let i=0;i<bits.length;i+=8)data.push(parseInt(bits.slice(i,i+8).join(''),2));
+  for(let p=0xEC;data.length<dcTotal;p^=0xEC^0x11)data.push(p);
+  // Reed-Solomon
+  const exp=[],log=[];let x=1;for(let i=0;i<255;i++){exp[i]=x;log[x]=i;x<<=1;if(x&256)x^=0x11D}
+  const mul=(a,b)=>a&&b?exp[(log[a]+log[b])%255]:0;
+  let gen=[1];for(let i=0;i<ec;i++){const n=new Array(gen.length+1).fill(0);gen.forEach((c,j)=>{n[j]^=c;n[j+1]^=mul(c,exp[i])});gen=n}
+  const shortLen=Math.floor(rawCw/nb),numShort=nb-rawCw%nb,blocks=[];let k=0;
+  for(let i=0;i<nb;i++){
+    const len=shortLen-ec+(i<numShort?0:1),d=data.slice(k,k+len);k+=len;
+    const r=new Array(ec).fill(0);
+    for(const b of d){const f=b^r.shift();r.push(0);gen.slice(1).forEach((c,j)=>r[j]^=mul(c,f))}
+    blocks.push({d,r});
+  }
+  const all=[];const maxD=shortLen-ec+1;
+  for(let i=0;i<maxD;i++)blocks.forEach(b=>{if(i<b.d.length)all.push(b.d[i])});
+  for(let i=0;i<ec;i++)blocks.forEach(b=>all.push(b.r[i]));
+  // Matris
+  const size=ver*4+17,M=[],F=[];for(let i=0;i<size;i++){M.push(new Array(size).fill(false));F.push(new Array(size).fill(false))}
+  const set=(x,y,v)=>{if(x>=0&&y>=0&&x<size&&y<size){M[y][x]=v;F[y][x]=true}};
+  for(let i=0;i<size;i++){set(6,i,i%2==0);set(i,6,i%2==0)}
+  [[3,3],[size-4,3],[3,size-4]].forEach(([cx,cy])=>{for(let dy=-4;dy<=4;dy++)for(let dx=-4;dx<=4;dx++){const d=Math.max(Math.abs(dx),Math.abs(dy));set(cx+dx,cy+dy,d!=2&&d!=4)}});
+  if(ver>1){
+    const na=Math.floor(ver/7)+2,step=Math.ceil((ver*4+4)/(na*2-2))*2,pos=[];
+    for(let p=size-7;pos.length<na-1;p-=step)pos.unshift(p);pos.unshift(6);
+    pos.forEach((cy,i)=>pos.forEach((cx,j)=>{
+      if((i==0&&j==0)||(i==0&&j==na-1)||(i==na-1&&j==0))return;
+      for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)set(cx+dx,cy+dy,Math.max(Math.abs(dx),Math.abs(dy))!=1);
+    }));
+  }
+  // formatbitar (ECC L = 01, mask 0)
+  const fd=(1<<3)|0;let rem=fd;for(let i=0;i<10;i++)rem=(rem<<1)^((rem>>9)*0x537);
+  const fb=((fd<<10)|rem)^0x5412,bit=i=>((fb>>i)&1)!=0;
+  for(let i=0;i<=5;i++)set(8,i,bit(i));set(8,7,bit(6));set(8,8,bit(7));set(7,8,bit(8));
+  for(let i=9;i<15;i++)set(14-i,8,bit(i));
+  for(let i=0;i<8;i++)set(size-1-i,8,bit(i));
+  for(let i=8;i<15;i++)set(8,size-15+i,bit(i));
+  set(8,size-8,true);
+  if(ver>=7){
+    let r2=ver;for(let i=0;i<12;i++)r2=(r2<<1)^((r2>>11)*0x1F25);
+    const vb=(ver<<12)|r2;
+    for(let i=0;i<18;i++){const b=((vb>>i)&1)!=0,a=size-11+i%3,c=Math.floor(i/3);set(a,c,b);set(c,a,b)}
+  }
+  // data
+  let bi=0;
+  for(let right=size-1;right>=1;right-=2){
+    if(right==6)right=5;
+    for(let v=0;v<size;v++)for(let j=0;j<2;j++){
+      const xx=right-j,up=((right+1)&2)==0,yy=up?size-1-v:v;
+      if(!F[yy][xx]&&bi<all.length*8){M[yy][xx]=((all[bi>>3]>>(7-(bi&7)))&1)!=0;bi++}
+    }
+  }
+  for(let y=0;y<size;y++)for(let xx=0;xx<size;xx++)if(!F[y][xx]&&(xx+y)%2==0)M[y][xx]=!M[y][xx];
+  return M;
+}
+function drawQR(text){
+  const c=$('qr'),ctx=c.getContext('2d'),M=makeQR(text);
+  ctx.fillStyle='#fff';ctx.fillRect(0,0,c.width,c.height);
+  if(!M){ctx.fillStyle='#000';ctx.fillText('Adressen är för lång',20,120);return}
+  const q=4,n=M.length,s=Math.floor(c.width/(n+q*2)),off=Math.floor((c.width-s*n)/2);
+  ctx.fillStyle='#000';
+  M.forEach((row,y)=>row.forEach((v,x)=>{if(v)ctx.fillRect(off+x*s,off+y*s,s,s)}));
+}
+$('share').onclick=()=>{
+  const u=location.href.split('#')[0];$('url').textContent=u;drawQR(u);$('dlg').showModal();
+};
+$('close').onclick=()=>$('dlg').close();
+</script>
+</body>
+</html>
