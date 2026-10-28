@@ -112,7 +112,7 @@ dialog::backdrop{background:#0008}
  <div class="col">
   <div class="card">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Årtal i filnamn</h2><button id="cpyear">Kopiera</button></div>
-    <p class="muted small" style="margin:6px 0 0">Kontrollerar texten efter sista kommat. Rätt format: <i>1984, c1984, 1980t, c1980t, 1970-1990, 1970t-1990t</i>, text inom parenteser ( ) ignoreras, samt med förord: <i>före 1884, innan 1935, troligen 1993, efter 1975, sent 1890t, mitten 1960t, tidigt 1980t</i>.</p>
+    <p class="muted small" style="margin:6px 0 0">Kontrollerar texten efter sista kommat. Rätt format: <i>1984, c1984, 1980t, c1980t, 1970-1990, 1970t-1990t</i>, text inom parenteser ( ) ignoreras, samt med förord: <i>före 1884, innan 1935, troligen 1993, mellan 1956-1967, efter 1975, sent 1890t, mitten 1960t, tidigt 1980t</i>.</p>
     <div class="seg" id="seg">
       <button data-c="none">Inget årtal <b id="cn"></b></button>
       <button data-c="inner">Årtal inne i namnet <b id="ci"></b></button>
@@ -139,7 +139,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.12';
+const VERSION='1.13';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -252,7 +252,7 @@ function ranges(a){
 }
 let dupText='',missText='',ignText='',yearText='';
 let yearGroups={none:[],inner:[],ok:[]},yearSel='none';
-const YEAR_END=/^(?:(?:före|innan|efter|sent|mitten|tidigt|troligen)\s+)?(c)?(\d{4})(t)?(?:\s*[-–]\s*(c)?(\d{4})(t)?)?$/i;
+const YEAR_END=/^(?:(?:före|innan|efter|sent|mitten|tidigt|troligen|mellan)\s+)?(c)?(\d{4})(t)?(?:\s*[-–]\s*(c)?(\d{4})(t)?)?$/i;
 const YEAR_IN=/(^|[^\d])(1[4-9]\d\d|20\d\d)(?!\d)/g;
 const yOk=y=>y>=1400&&y<=2099;
 function markUp(path,name,ranges){
