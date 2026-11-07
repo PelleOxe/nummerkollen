@@ -52,6 +52,16 @@ button.num.done{background:var(--okbg);color:var(--ok)}
 .seg{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
 .seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .scroll{max-height:460px;overflow:auto}
+.grp{border:1px solid var(--line);border-radius:10px;padding:10px;margin-top:10px}
+.grp h3{margin:0 0 8px;font-size:.95rem}
+.pics{display:flex;flex-wrap:wrap;gap:10px}
+.pic{width:190px;font-size:.8rem;word-break:break-all}
+.pic canvas{display:block;width:190px;height:140px;background:var(--bg);border-radius:6px;border:1px solid var(--line)}
+.pic .meta{margin-top:4px}
+.pic .dim{color:var(--muted)}
+.badge{display:inline-block;background:var(--okbg);color:var(--ok);border-radius:6px;padding:0 6px;font-size:.75rem;margin-left:4px}
+progress{width:100%;height:10px}
+#imgCard h2.sec{margin:18px 0 0}
 mark{background:var(--okbg);color:var(--ok);border-radius:3px;padding:0 2px}
 .dup{border-top:1px solid var(--line);padding:8px 0}
 .dup:first-child{border-top:0}
@@ -128,6 +138,20 @@ dialog::backdrop{background:#0008}
  </div>
 </div>
 
+<div class="card" id="imgCard" hidden>
+  <h2>Bilddubbletter</h2>
+  <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att jämföra ett litet visuellt fingeravtryck av varje bild. Inget laddas upp och inget ändras eller raderas.</p>
+  <div class="row">
+    <button class="primary" id="imgGo">Sök bilddubbletter</button>
+    <button id="imgStop" hidden>Avbryt</button>
+    <label>Tolerans <input type="range" id="tol" min="0" max="14" value="5"> <b id="tolV">5</b></label>
+    <span class="muted small">Lägre = strängare (färre falska träffar), högre = lösare</span>
+  </div>
+  <div id="imgProgWrap" hidden style="margin-top:10px"><progress id="imgProg" max="1" value="0"></progress><div class="muted small" id="imgTxt"></div></div>
+  <div class="stat" id="imgStat"></div>
+  <div id="imgRes"></div>
+</div>
+
 <footer>© <span id="yr"></span> Per Andersson</footer>
 </div>
 
@@ -139,7 +163,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.13';
+const VERSION='1.14';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -178,7 +202,7 @@ async function busy(fn){
 }
 async function walk(dir,rec,out,prefix){
   for await(const [name,h] of dir.entries()){
-    if(h.kind==='file'){out.push({name,path:prefix+name});if(++scanCount%250===0)$('busyTxt').textContent='Läser katalogen… '+scanCount+' filer'}
+    if(h.kind==='file'){out.push({name,path:prefix+name,handle:h});if(++scanCount%250===0)$('busyTxt').textContent='Läser katalogen… '+scanCount+' filer'}
     else if(rec)await walk(h,rec,out,prefix+name+'/');
   }
 }
@@ -204,6 +228,7 @@ $('pick').onclick=async()=>{
   if(window.showDirectoryPicker){
     try{
       dirHandle=await window.showDirectoryPicker();
+      resetImg();
       await kvSet('dir',dirHandle);
       $('refresh').hidden=false;$('saved').hidden=true;
       await scanHandle();
@@ -223,7 +248,8 @@ $('fallback').onchange=e=>{
   $('refresh').hidden=false;
   busy(async()=>{
     lastName=all[0].webkitRelativePath.split('/')[0];
-    lastFiles=all.map(f=>({name:f.name,path:f.webkitRelativePath.split('/').slice(1).join('/')}));
+    lastFiles=all.map(f=>({name:f.name,path:f.webkitRelativePath.split('/').slice(1).join('/'),file:f}));
+    resetImg();
     analyse();
   });
 };
@@ -311,7 +337,7 @@ function analyse(){
     if(!map.has(n))map.set(n,[]);map.get(n).push(f.path);
   }
   const nums=[...map.keys()].sort((a,b)=>a-b);
-  $('out').hidden=false;
+  $('out').hidden=false;$('imgCard').hidden=false;
   $('catname').textContent='Katalog: '+lastName;
   $('stat').innerHTML=[`${matched} filer med nummer`,`${nums.length} olika nummer`,nums.length?`Lägsta: ${nums[0]}`:'',nums.length?`Högsta: ${nums[nums.length-1]}`:'',skippedList.length?`${skippedList.length} bild(er) utan nummer+komma ignorerade`:''].filter(Boolean).map(t=>`<span class="pill">${t}</span>`).join('');
 
@@ -357,6 +383,196 @@ $('cpyear').onclick=e=>copy(yearText,e.target);
 $('cpign').onclick=e=>copy(ignText,e.target);
 $('cpdup').onclick=e=>copy(dupText,e.target);
 $('cpmiss').onclick=e=>copy(missText,e.target);
+
+/* ---------- Bilddubbletter ---------- */
+let imgAbort=false,imgState=null,thumbQ=Promise.resolve(),simToken=0;
+const tick=()=>new Promise(r=>setTimeout(r,0));
+const IMG_RE=/\.(jpe?g|png)$/i;
+function resetImg(){simToken++;imgState=null;$('imgRes').innerHTML='';$('imgStat').innerHTML='';$('imgProgWrap').hidden=true}
+function prog(txt,v,max){$('imgProgWrap').hidden=false;$('imgProg').max=max||1;$('imgProg').value=v||0;$('imgTxt').textContent=txt}
+function fmtSize(b){return b>=1048576?(b/1048576).toFixed(1)+' MB':Math.max(1,Math.round(b/1024))+' kB'}
+function fmtTime(sec){sec=Math.round(sec);return sec>=60?Math.floor(sec/60)+' min '+(sec%60)+' s':sec+' s'}
+function pc(x){x=x-((x>>>1)&0x55555555);x=(x&0x33333333)+((x>>>2)&0x33333333);return Math.imul((x+(x>>>4))&0x0F0F0F0F,0x01010101)>>>24}
+
+async function sha256(file){
+  const buf=await file.arrayBuffer();
+  if(window.crypto&&crypto.subtle){
+    const d=await crypto.subtle.digest('SHA-256',buf);
+    return [...new Uint8Array(d)].map(b=>b.toString(16).padStart(2,'0')).join('');
+  }
+  const u=new Uint8Array(buf);let h1=0x811c9dc5,h2=0x9747b28c;
+  for(let i=0;i<u.length;i++){h1=Math.imul(h1^u[i],0x01000193)>>>0;h2=Math.imul(h2^u[i],0x85ebca6b)>>>0}
+  return 'f'+h1.toString(16)+h2.toString(16)+'-'+u.length;
+}
+
+const hc=document.createElement('canvas');hc.width=72;hc.height=64;
+const hx=hc.getContext('2d',{willReadFrequently:true});
+async function dhash(file){ // 9x8 rutor -> 64 bitar (jämför intilliggande ljushet)
+  let bmp;
+  try{bmp=await createImageBitmap(file,{resizeWidth:72,resizeHeight:64,resizeQuality:'medium'})}
+  catch(e){bmp=await createImageBitmap(file)}
+  hx.fillStyle='#fff';hx.fillRect(0,0,72,64);hx.drawImage(bmp,0,0,72,64);if(bmp.close)bmp.close();
+  const d=hx.getImageData(0,0,72,64).data,a=new Float32Array(72);
+  for(let y=0;y<64;y++)for(let x=0;x<72;x++){const i=(y*72+x)*4;a[(y>>3)*9+(x>>3)]+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]}
+  let mn=1e9,mx=-1;for(let i=0;i<72;i++){a[i]/=64;if(a[i]<mn)mn=a[i];if(a[i]>mx)mx=a[i]}
+  let hi=0,lo=0;
+  for(let y=0;y<8;y++)for(let x=0;x<8;x++){
+    const bit=a[y*9+x]>a[y*9+x+1]?1:0,k=y*8+x;
+    if(k<32)hi=((hi<<1)|bit)>>>0;else lo=((lo<<1)|bit)>>>0;
+  }
+  return [hi,lo,(mx-mn)<6?1:0];
+}
+
+async function runImg(){
+  const imgs=lastFiles.filter(f=>IMG_RE.test(f.name)&&($('sub').checked||!f.path.includes('/')));
+  if(!imgs.length){prog('Inga jpg/png-filer hittades.',0,1);return}
+  const cache=(await kvGet('imgcache'))||{ph:{},sha:{}};
+  let lastUI=0,aborted=false;
+  const ui=async(txt,v,max)=>{if(Date.now()-lastUI>80){lastUI=Date.now();prog(txt,v,max);await tick()}};
+
+  // 1. Filinformation
+  const recs=[];
+  for(let i=0;i<imgs.length;i++){
+    const f=imgs[i];
+    try{
+      const file=f.file||await f.handle.getFile();
+      recs.push({path:f.path,name:f.name,size:file.size,file,key:lastName+'/'+f.path+'|'+file.size+'|'+file.lastModified});
+    }catch(e){}
+    await ui('Läser filinformation… '+i+' / '+imgs.length,i,imgs.length);
+    if(imgAbort){prog('Avbrutet.',0,1);return}
+  }
+  const n=recs.length;
+
+  // 2. Identiska filer (samma storlek, sedan SHA-256)
+  const bySize=new Map();
+  recs.forEach((r,i)=>{let a=bySize.get(r.size);if(!a)bySize.set(r.size,a=[]);a.push(i)});
+  const cand=[];bySize.forEach(a=>{if(a.length>1)a.forEach(i=>cand.push(i))});
+  for(let c=0;c<cand.length;c++){
+    const r=recs[cand[c]];
+    try{
+      if(!cache.sha[r.key])cache.sha[r.key]=await sha256(r.file);
+      r.sha=cache.sha[r.key];
+    }catch(e){}
+    await ui('Kontrollerar identiska filer… '+c+' / '+cand.length,c,cand.length);
+    if(imgAbort){await kvSet('imgcache',cache);prog('Avbrutet. Det som hunnit läsas är sparat till nästa gång.',0,1);return}
+  }
+  const bySha=new Map();
+  recs.forEach((r,i)=>{if(r.sha){let a=bySha.get(r.sha);if(!a)bySha.set(r.sha,a=[]);a.push(i)}});
+  const exact=[...bySha.values()].filter(a=>a.length>1);
+  const HI=new Uint32Array(n),LO=new Uint32Array(n),ok=new Uint8Array(n);
+  imgState={recs,exact,sim:[],HI,LO,ok,errors:0,partial:false};
+  renderImg();
+  await kvSet('imgcache',cache);
+
+  // 3. Visuella fingeravtryck
+  const t0=Date.now();let computed=0;
+  for(let i=0;i<n;i++){
+    const r=recs[i];let v=cache.ph[r.key];
+    if(!v){
+      try{v=await dhash(r.file);computed++}catch(e){v=[0,0,2];imgState.errors++}
+      cache.ph[r.key]=v;
+      if(computed%400===0)await kvSet('imgcache',cache);
+    }
+    if(v[2]===0){HI[i]=v[0];LO[i]=v[1];ok[i]=1}
+    const eta=computed>20?' · ca '+fmtTime((Date.now()-t0)/computed*(n-i)/1000)+' kvar':'';
+    await ui('Läser av bilder… '+i+' / '+n+eta,i,n);
+    if(imgAbort){aborted=true;break}
+  }
+  await kvSet('imgcache',cache);
+  imgState.partial=aborted;
+  imgAbort=false;
+  await groupSimilar();
+  prog(aborted?'Avbrutet – delvis resultat.':'Klart.',1,1);
+}
+
+async function groupSimilar(){
+  const st=imgState;if(!st)return;
+  const token=++simToken,{recs,HI,LO,ok}=st,n=recs.length,T=+$('tol').value;
+  const par=new Int32Array(n);for(let i=0;i<n;i++)par[i]=i;
+  const find=x=>{while(par[x]!==x){par[x]=par[par[x]];x=par[x]}return x};
+  for(let i=0;i<n;i++){
+    if(ok[i]){
+      const hi=HI[i],lo=LO[i];
+      for(let j=i+1;j<n;j++){
+        if(ok[j]&&pc(hi^HI[j])+pc(lo^LO[j])<=T){const a=find(i),b=find(j);if(a!==b)par[a]=b}
+      }
+    }
+    if(i%120===0){prog('Jämför bilder… '+i+' / '+n,i,n);await tick();if(token!==simToken)return}
+  }
+  const m=new Map();
+  for(let i=0;i<n;i++){if(!ok[i])continue;const r=find(i);let a=m.get(r);if(!a)m.set(r,a=[]);a.push(i)}
+  st.sim=[...m.values()].filter(g=>g.length>1)
+    .filter(g=>!g.every(i=>recs[i].sha&&recs[i].sha===recs[g[0]].sha)); // rena identiska grupper visas redan ovan
+  prog('Klart.',1,1);
+  renderImg();
+}
+
+function drawThumb(r,p){
+  const cv=p.querySelector('canvas'),cx=cv.getContext('2d'),dim=p.querySelector('.dim');
+  return createImageBitmap(r.file).then(bmp=>{
+    r.w=bmp.width;r.h=bmp.height;
+    const k=Math.min(190/bmp.width,140/bmp.height),w=bmp.width*k,h=bmp.height*k;
+    cx.drawImage(bmp,(190-w)/2,(140-h)/2,w,h);if(bmp.close)bmp.close();
+    dim.textContent=r.w+'×'+r.h+' px · '+fmtSize(r.size);
+  }).catch(()=>{dim.textContent='Kunde inte visas · '+fmtSize(r.size)});
+}
+
+function renderGroups(el,groups,recs){
+  el.innerHTML='';
+  if(!groups.length){el.innerHTML='<span class="chip ok">Inga grupper</span>';return}
+  const sorted=groups.map(g=>g.slice().sort((a,b)=>recs[a].path.localeCompare(recs[b].path,'sv')))
+    .sort((a,b)=>recs[a[0]].path.localeCompare(recs[b[0]].path,'sv'));
+  let shown=0;const PAGE=20;
+  const more=document.createElement('button');more.style.marginTop='10px';
+  function add(){
+    const end=Math.min(shown+PAGE,sorted.length);
+    for(;shown<end;shown++){
+      const g=sorted[shown],div=document.createElement('div');div.className='grp';
+      div.innerHTML='<h3>Grupp '+(shown+1)+' · '+g.length+' filer</h3>';
+      const pics=document.createElement('div');pics.className='pics';
+      const els=[];let lastP=null;
+      g.forEach(i=>{
+        const r=recs[i],p=document.createElement('div');p.className='pic';
+        p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+markUp(r.path,r.name,[])+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
+        pics.appendChild(p);els.push([r,p]);
+        lastP=thumbQ=thumbQ.then(()=>drawThumb(r,p));
+      });
+      lastP.then(()=>{
+        const px=els.map(([r])=>(r.w||0)*(r.h||0));
+        if(new Set(px).size>1){const k=px.indexOf(Math.max(...px));
+          const b=document.createElement('span');b.className='badge';b.textContent='störst';els[k][1].querySelector('.meta').appendChild(b)}
+      });
+      div.appendChild(pics);el.insertBefore(div,more);
+    }
+    more.hidden=shown>=sorted.length;
+    more.textContent='Visa fler ('+(sorted.length-shown)+' grupper kvar)';
+  }
+  more.onclick=add;el.appendChild(more);add();
+}
+
+function renderImg(){
+  const st=imgState;if(!st)return;
+  $('imgStat').innerHTML=[`${st.recs.length} bilder lästa`,`${st.exact.length} grupper med identiska filer`,st.ok.some(v=>v)?`${st.sim.length} grupper med liknande bilder`:'',st.errors?`${st.errors} bild(er) kunde inte läsas`:''].filter(Boolean).map(t=>`<span class="pill">${t}</span>`).join('');
+  const res=$('imgRes');res.innerHTML='<h2 class="sec">Identiska filer</h2><div id="gExact"></div><h2 class="sec">Liknande bilder'+(st.partial?' (delvis)':'')+'</h2><div id="gSim"></div>';
+  renderGroups($('gExact'),st.exact,st.recs);
+  renderGroups($('gSim'),st.sim,st.recs);
+}
+
+$('imgGo').onclick=async()=>{
+  if(!lastFiles)return;
+  simToken++;imgAbort=false;imgState=null;$('imgRes').innerHTML='';$('imgStat').innerHTML='';
+  $('imgGo').disabled=true;$('imgStop').hidden=false;
+  try{await runImg()}catch(e){alert('Fel vid bildjämförelse: '+e.message)}
+  $('imgGo').disabled=false;$('imgStop').hidden=true;
+};
+$('imgStop').onclick=()=>{imgAbort=true};
+$('tol').oninput=()=>{$('tolV').textContent=$('tol').value};
+$('tol').onchange=()=>{if(imgState&&!$('imgGo').disabled)groupSimilar()};
+$('imgRes').onclick=e=>{
+  const b=e.target.closest('button.num');if(!b)return;
+  const old=b.textContent;
+  navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
+};
 
 /* ---------- Dela app (QR) ---------- */
 function makeQR(text){
