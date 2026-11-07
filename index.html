@@ -61,6 +61,16 @@ button.num.done{background:var(--okbg);color:var(--ok)}
 .pic .dim{color:var(--muted)}
 .badge{display:inline-block;background:var(--okbg);color:var(--ok);border-radius:6px;padding:0 6px;font-size:.75rem;margin-left:4px}
 progress{width:100%;height:10px}
+.pic canvas{cursor:zoom-in;user-select:none}
+#viewer{max-width:none;width:96vw;height:94vh;padding:0;text-align:left;overflow:hidden}
+#viewer[open]{display:flex;flex-direction:column}
+.vhead{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line)}
+.vtitle{font-weight:600;word-break:break-all;min-width:0;flex:1 1 300px}
+.vstage{flex:1;min-height:0;overflow:auto;display:flex;background:#000}
+.vstage img{margin:auto;display:block}
+.vstage img.fit{max-width:100%;max-height:calc(94vh - 120px);object-fit:contain;cursor:zoom-in}
+.vstage img.actual{max-width:none;max-height:none;cursor:zoom-out}
+.vfoot{padding:8px 14px;border-top:1px solid var(--line)}
 #imgCard h2.sec{margin:18px 0 0}
 mark{background:var(--okbg);color:var(--ok);border-radius:3px;padding:0 2px}
 .dup{border-top:1px solid var(--line);padding:8px 0}
@@ -155,6 +165,21 @@ dialog::backdrop{background:#0008}
 <footer>© <span id="yr"></span> Per Andersson</footer>
 </div>
 
+<dialog id="viewer">
+  <div class="vhead">
+    <div class="vtitle" id="vTitle"></div>
+    <div class="row">
+      <button id="vPrev" aria-label="Föregående">◀</button>
+      <span class="muted" id="vPos"></span>
+      <button id="vNext" aria-label="Nästa">▶</button>
+      <button id="vZoom">Verklig storlek</button>
+      <button id="vClose">Stäng</button>
+    </div>
+  </div>
+  <div class="vstage"><img id="vImg" alt=""></div>
+  <div class="vfoot muted small" id="vInfo"></div>
+</dialog>
+
 <dialog id="dlg">
   <h2>Dela app</h2>
   <canvas id="qr" width="240" height="240"></canvas>
@@ -163,7 +188,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.14';
+const VERSION='1.15';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -535,6 +560,8 @@ function renderGroups(el,groups,recs){
         const r=recs[i],p=document.createElement('div');p.className='pic';
         p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+markUp(r.path,r.name,[])+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
         pics.appendChild(p);els.push([r,p]);
+        const cvEl=p.querySelector('canvas');cvEl.title='Dubbelklicka för att visa större';
+        cvEl.ondblclick=()=>openViewer(g.map(x=>recs[x]),g.indexOf(i));
         lastP=thumbQ=thumbQ.then(()=>drawThumb(r,p));
       });
       lastP.then(()=>{
@@ -569,6 +596,39 @@ $('imgStop').onclick=()=>{imgAbort=true};
 $('tol').oninput=()=>{$('tolV').textContent=$('tol').value};
 $('tol').onchange=()=>{if(imgState&&!$('imgGo').disabled)groupSimilar()};
 $('imgRes').onclick=e=>{
+  const b=e.target.closest('button.num');if(!b)return;
+  const old=b.textContent;
+  navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
+};
+
+/* ---------- Bildvisare för en grupp ---------- */
+let vList=[],vIdx=0,vUrl=null,vActual=false;
+function openViewer(list,idx){vList=list;vIdx=idx;vActual=false;showV();$('viewer').showModal()}
+function showV(){
+  const r=vList[vIdx],im=$('vImg');
+  if(vUrl)URL.revokeObjectURL(vUrl);
+  vUrl=URL.createObjectURL(r.file);
+  $('vInfo').textContent=fmtSize(r.size);
+  im.onload=()=>{$('vInfo').textContent=im.naturalWidth+'×'+im.naturalHeight+' px · '+fmtSize(r.size)};
+  im.src=vUrl;
+  $('vTitle').innerHTML=markUp(r.path,r.name,[]);
+  $('vPos').textContent=(vIdx+1)+' / '+vList.length;
+  applyZoom();
+  document.querySelector('.vstage').scrollTo(0,0);
+}
+function applyZoom(){$('vImg').className=vActual?'actual':'fit';$('vZoom').textContent=vActual?'Anpassa till fönster':'Verklig storlek'}
+function vStep(d){vIdx=(vIdx+d+vList.length)%vList.length;showV()}
+$('vPrev').onclick=()=>vStep(-1);
+$('vNext').onclick=()=>vStep(1);
+$('vZoom').onclick=()=>{vActual=!vActual;applyZoom()};
+$('vImg').onclick=()=>{vActual=!vActual;applyZoom()};
+$('vClose').onclick=()=>$('viewer').close();
+$('viewer').addEventListener('close',()=>{if(vUrl){URL.revokeObjectURL(vUrl);vUrl=null}$('vImg').removeAttribute('src')});
+$('viewer').addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'){e.preventDefault();vStep(1)}
+  else if(e.key==='ArrowLeft'){e.preventDefault();vStep(-1)}
+});
+$('vTitle').onclick=e=>{
   const b=e.target.closest('button.num');if(!b)return;
   const old=b.textContent;
   navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
