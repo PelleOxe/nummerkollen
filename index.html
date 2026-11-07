@@ -64,6 +64,8 @@ progress{width:100%;height:10px}
 #renDlg{max-width:none;width:min(560px,94vw);text-align:left}
 #renIn{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);flex:1;min-width:240px}
 #renErr{color:var(--warn);min-height:1.2em;margin:8px 0}
+select{font:inherit;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+#bulkDlg{max-width:none;width:min(520px,94vw);text-align:left}
 #delDlg{max-width:none;width:min(480px,94vw);text-align:left}
 button.danger{background:#c0392b;border-color:#c0392b;color:#fff;font-weight:600;box-shadow:0 3px 0 rgba(0,0,0,.35)}
 #delErr{color:var(--warn);min-height:1.2em;margin:8px 0}
@@ -140,11 +142,16 @@ dialog::backdrop{background:#0008}
  <div class="col">
   <div class="card">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Årtal i filnamn</h2><button id="cpyear">Kopiera</button></div>
-    <p class="muted small" style="margin:6px 0 0">Kontrollerar texten efter sista kommat. Rätt format: <i>1984, c1984, 1980t, c1980t, 1970-1990, 1970t-1990t</i>, text inom parenteser ( ) ignoreras, samt med förord: <i>före 1884, innan 1935, troligen 1993, mellan 1956-1967, efter 1975, sent 1890t, mitten 1960t, tidigt 1980t</i>.</p>
+    <p class="muted small" style="margin:6px 0 0">Kontrollerar texten efter sista kommat. Tillfälligt: <i>xxxx</i> eller <i>0000</i> (platshållare, visas i eget filter). Rätt format: <i>1984, c1984, 1980t, c1980t, 1970-1990, 1970t-1990t</i>, text inom parenteser ( ) ignoreras, samt med förord: <i>före 1884, innan 1935, troligen 1993, mellan 1956-1967, efter 1975, sent 1890t, mitten 1960t, tidigt 1980t</i>.</p>
     <div class="seg" id="seg">
       <button data-c="none">Inget årtal <b id="cn"></b></button>
       <button data-c="inner">Årtal inne i namnet <b id="ci"></b></button>
+      <button data-c="temp">Tillfälligt (xxxx/0000) <b id="ct"></b></button>
       <button data-c="ok">Rätt årtal i slutet <b id="ck"></b></button>
+    </div>
+    <div class="row" id="bulkRow" hidden style="margin:0 0 8px">
+      <label>Platshållare <select id="phSel"><option value="xxxx">xxxx</option><option value="0000">0000</option></select></label>
+      <button id="bulkBtn"></button>
     </div>
     <div class="scroll" id="yearList"></div>
   </div>
@@ -181,6 +188,15 @@ dialog::backdrop{background:#0008}
   <div class="row"><button class="primary" id="renOk">Spara</button><button id="renCancel">Avbryt</button></div>
 </dialog>
 
+<dialog id="bulkDlg">
+  <h2>Lägg till platshållare</h2>
+  <p class="small" id="bulkTxt" style="margin:0 0 6px"></p>
+  <p class="muted small" id="bulkEx" style="word-break:break-all;margin:0 0 10px"></p>
+  <progress id="bulkProg" max="1" value="0" hidden></progress>
+  <p class="small" id="bulkStat" style="min-height:1.2em"></p>
+  <div class="row"><button id="bulkCancel">Avbryt</button><button class="danger" id="bulkOk">Byt namn på alla</button></div>
+</dialog>
+
 <dialog id="delDlg">
   <h2>Flytta till _Raderade?</h2>
   <p class="small" id="delName" style="word-break:break-all;margin:0"></p>
@@ -213,7 +229,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.17';
+const VERSION='1.18';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -327,7 +343,7 @@ function ranges(a){
   return r;
 }
 let dupText='',missText='',ignText='',yearText='';
-let yearGroups={none:[],inner:[],ok:[]},yearSel='none';
+let yearGroups={none:[],inner:[],ok:[],temp:[]},yearSel='none';
 const YEAR_END=/^(?:(?:före|innan|efter|sent|mitten|tidigt|troligen|mellan)\s+)?(c)?(\d{4})(t)?(?:\s*[-–]\s*(c)?(\d{4})(t)?)?$/i;
 const YEAR_IN=/(^|[^\d])(1[4-9]\d\d|20\d\d)(?!\d)/g;
 const yOk=y=>y>=1400&&y<=2099;
@@ -355,6 +371,10 @@ function classify(f){
   const name=f.name,base=maskParen(name.replace(/\.(jpe?g|png)$/i,''));
   const first=base.indexOf(','),last=base.lastIndexOf(',');
   const raw=base.slice(last+1),tail=raw.trim();
+  if(/^(xxxx|0000)$/i.test(tail)){
+    const st0=last+1+raw.indexOf(tail);
+    return {cat:'temp',html:markUp(f.path,name,[[st0,st0+tail.length]])};
+  }
   const m=YEAR_END.exec(tail);
   if(m){
     const a=+m[2],b=m[5]?+m[5]:a;
@@ -370,15 +390,18 @@ function classify(f){
 }
 function renderYears(){
   const g=yearGroups;
-  $('cn').textContent='('+g.none.length+')';$('ci').textContent='('+g.inner.length+')';$('ck').textContent='('+g.ok.length+')';
+  $('cn').textContent='('+g.none.length+')';$('ci').textContent='('+g.inner.length+')';$('ck').textContent='('+g.ok.length+')';$('ct').textContent='('+g.temp.length+')';
   document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.c===yearSel));
   const list=g[yearSel];
   $('yearList').innerHTML=list.length?list.map(x=>`<div class="ign">${x.html}</div>`).join(''):'<span class="chip ok">Inga filer i den här gruppen</span>';
   yearText=list.map(x=>x.path).join('\n');
+  const showBulk=yearSel==='none'&&g.none.length&&dirHandle;
+  $('bulkRow').hidden=!showBulk;
+  if(showBulk)$('bulkBtn').textContent='Lägg till ", '+$('phSel').value+'" på alla ('+g.none.length+')';
 }
 
 function analyse(){
-  const map=new Map();let matched=0;const skippedList=[];yearGroups={none:[],inner:[],ok:[]};
+  const map=new Map();let matched=0;const skippedList=[];yearGroups={none:[],inner:[],ok:[],temp:[]};
   for(const f of lastFiles){
     if(!$('sub').checked&&f.path.includes('/'))continue;
     const m=FILE_RE.exec(f.name);
@@ -662,7 +685,7 @@ $('vTitle').onclick=e=>{
 
 /* ---------- Byt namn (högerklick på filnumret) ---------- */
 const renameLog=[];let renPath=null;
-async function doRename(path,newName){
+async function doRename(path,newName,quiet){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
   if(!e||!e.handle||!dirHandle)throw new Error('Namnbyte kräver Chrome/Edge och att katalogen valts med "Välj katalog…".');
   const o={mode:'readwrite'};
@@ -696,6 +719,7 @@ async function doRename(path,newName){
     const r=imgState.recs.find(x=>x.path===path);
     if(r){r.path=newPath;r.name=newName;r.file=await e.handle.getFile();r.key=lastName+'/'+newPath+'|'+r.size+'|'+r.file.lastModified}
   }
+  if(quiet)return newPath;
   document.querySelectorAll('#imgRes button.num[data-path]').forEach(b=>{
     if(b.dataset.path!==path)return;
     const meta=b.parentElement,bd=meta.querySelector('.badge');
@@ -740,7 +764,16 @@ $('renIn').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault()
 $('undoRen').onclick=async()=>{
   const last=renameLog[renameLog.length-1];if(!last)return;
   try{
-    if(last.type==='del'){
+    if(last.type==='batch'){
+      const rest=[];
+      for(const it of last.items.slice().reverse()){
+        try{await doRename(it.to,it.from.split('/').pop(),true)}catch(err){rest.unshift(it)}
+      }
+      last.items=rest;
+      if(!rest.length)renameLog.pop();
+      analyse();if(imgState)renderImg();
+      updRenBar('Ångrade omgången'+(rest.length?' – '+rest.length+' filer kunde inte återställas (finns kvar i loggen)':''));
+    }else if(last.type==='del'){
       await undoDelete(last);renameLog.pop();
       updRenBar('Återställde: '+last.path.split('/').pop());
     }else{
@@ -841,6 +874,43 @@ $('delOk').onclick=async()=>{
     $('delDlg').close();
   }catch(err){$('delErr').textContent=err.message}
   finally{$('delOk').disabled=false}
+};
+
+/* ---------- Platshållare på alla filer utan årtal ---------- */
+let bulkAbort=false,bulkBusy=false;
+try{const ph=localStorage.getItem('nk-ph');if(ph==='0000'||ph==='xxxx')$('phSel').value=ph}catch(e){}
+function bulkName(name,tok){
+  const m=/(\.[^.]+)$/.exec(name),ext=m?m[1]:'',base=(ext?name.slice(0,-ext.length):name).replace(/[\s,]+$/,'');
+  return base+', '+tok+ext;
+}
+$('phSel').onchange=()=>{try{localStorage.setItem('nk-ph',$('phSel').value)}catch(e){}renderYears()};
+$('bulkBtn').onclick=()=>{
+  const list=yearGroups.none;if(!list.length)return;
+  const tok=$('phSel').value,nm=list[0].path.split('/').pop();
+  $('bulkTxt').textContent='Lägg till ", '+tok+'" sist i namnet (före .jpg/.png) på '+list.length+' filer som saknar årtal. Det kan ta en stund. Hela omgången går att ångra med ett klick.';
+  $('bulkEx').textContent='Exempel: '+nm+'  →  '+bulkName(nm,tok);
+  $('bulkProg').hidden=true;$('bulkStat').textContent='';$('bulkOk').disabled=false;
+  $('bulkDlg').showModal();$('bulkCancel').focus();
+};
+$('bulkCancel').onclick=()=>{if(bulkBusy)bulkAbort=true;else $('bulkDlg').close()};
+$('bulkDlg').addEventListener('cancel',e=>{if(bulkBusy)e.preventDefault()});
+$('bulkOk').onclick=async()=>{
+  const tok=$('phSel').value,paths=yearGroups.none.map(x=>x.path),done=[];
+  let failed=0,firstErr='';
+  bulkAbort=false;bulkBusy=true;$('bulkOk').disabled=true;
+  $('bulkProg').hidden=false;$('bulkProg').max=paths.length;$('bulkProg').value=0;
+  $('bulkCancel').textContent='Stoppa';
+  for(let i=0;i<paths.length;i++){
+    const path=paths[i],nn=bulkName(path.split('/').pop(),tok);
+    try{done.push({from:path,to:await doRename(path,nn,true)})}
+    catch(err){failed++;if(!firstErr)firstErr=err.message;if(/skrivåtkomst/i.test(err.message))break}
+    if(i%5===0){$('bulkProg').value=i+1;$('bulkStat').textContent='Byter namn… '+(i+1)+' / '+paths.length;await tick()}
+    if(bulkAbort)break;
+  }
+  if(done.length)renameLog.push({type:'batch',items:done});
+  bulkBusy=false;$('bulkCancel').textContent='Avbryt';$('bulkDlg').close();
+  analyse();if(imgState)renderImg();
+  updRenBar('Lade till ", '+tok+'" på '+done.length+' filer'+(bulkAbort?' (stoppad)':'')+(failed?' – '+failed+' hoppades över: '+firstErr:''));
 };
 
 /* ---------- Dela app (QR) ---------- */
