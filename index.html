@@ -64,6 +64,9 @@ progress{width:100%;height:10px}
 #renDlg{max-width:none;width:min(560px,94vw);text-align:left}
 #renIn{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);flex:1;min-width:240px}
 #renErr{color:var(--warn);min-height:1.2em;margin:8px 0}
+#delDlg{max-width:none;width:min(480px,94vw);text-align:left}
+button.danger{background:#c0392b;border-color:#c0392b;color:#fff;font-weight:600;box-shadow:0 3px 0 rgba(0,0,0,.35)}
+#delErr{color:var(--warn);min-height:1.2em;margin:8px 0}
 .pic canvas{cursor:zoom-in;user-select:none}
 #viewer{max-width:none;width:96vw;height:94vh;padding:0;text-align:left;overflow:hidden}
 #viewer[open]{display:flex;flex-direction:column}
@@ -112,8 +115,8 @@ dialog::backdrop{background:#0008}
     <span class="muted small">Tomt = lägsta/högsta funna nummer</span>
   </div>
   <p class="muted small" id="saved" hidden></p>
-  <p class="muted small" style="margin:10px 0 0">Högerklicka på ett filnummer i listorna för att byta namn på filen (Chrome/Edge).</p>
-  <div class="row" id="renBar" hidden style="margin-top:8px"><span class="small" id="renMsg"></span><button id="undoRen">↶ Ångra senaste namnbyte</button></div>
+  <p class="muted small" style="margin:10px 0 0">Högerklicka på ett filnummer för att byta namn på filen. Ctrl+högerklick flyttar filen till mappen <b>_Raderade</b> (Chrome/Edge).</p>
+  <div class="row" id="renBar" hidden style="margin-top:8px"><span class="small" id="renMsg"></span><button id="undoRen">↶ Ångra senaste ändring</button></div>
   <input type="file" id="fallback" webkitdirectory multiple hidden>
 </div>
 
@@ -178,6 +181,15 @@ dialog::backdrop{background:#0008}
   <div class="row"><button class="primary" id="renOk">Spara</button><button id="renCancel">Avbryt</button></div>
 </dialog>
 
+<dialog id="delDlg">
+  <h2>Flytta till _Raderade?</h2>
+  <p class="small" id="delName" style="word-break:break-all;margin:0"></p>
+  <img id="delImg" alt="" style="max-width:100%;max-height:240px;display:block;margin:10px auto;border-radius:6px">
+  <p class="muted small" style="margin:0">Filen flyttas till mappen <b>_Raderade</b> i den valda katalogen. Den raderas inte, och kan återställas med "Ångra" eller genom att du själv flyttar tillbaka den.</p>
+  <p class="small" id="delErr"></p>
+  <div class="row"><button id="delCancel">Avbryt</button><button class="danger" id="delOk">Flytta till _Raderade</button></div>
+</dialog>
+
 <dialog id="viewer">
   <div class="vhead">
     <div class="vtitle" id="vTitle"></div>
@@ -201,7 +213,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.16';
+const VERSION='1.17';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -241,7 +253,7 @@ async function busy(fn){
 async function walk(dir,rec,out,prefix){
   for await(const [name,h] of dir.entries()){
     if(h.kind==='file'){out.push({name,path:prefix+name,handle:h});if(++scanCount%250===0)$('busyTxt').textContent='Läser katalogen… '+scanCount+' filer'}
-    else if(rec)await walk(h,rec,out,prefix+name+'/');
+    else if(rec&&name!=='_Raderade')await walk(h,rec,out,prefix+name+'/');
   }
 }
 
@@ -286,7 +298,7 @@ $('fallback').onchange=e=>{
   $('refresh').hidden=false;
   busy(async()=>{
     lastName=all[0].webkitRelativePath.split('/')[0];
-    lastFiles=all.map(f=>({name:f.name,path:f.webkitRelativePath.split('/').slice(1).join('/'),file:f}));
+    lastFiles=all.filter(f=>!f.webkitRelativePath.split('/').slice(1,-1).includes('_Raderade')).map(f=>({name:f.name,path:f.webkitRelativePath.split('/').slice(1).join('/'),file:f}));
     resetImg();
     analyse();
   });
@@ -329,7 +341,7 @@ function markUp(path,name,ranges){
   for(const [st,en,type,digits] of items){
     h+=esc(path.slice(pos,st));
     const t=esc(path.slice(st,en));
-    h+=type==='num'?`<button class="num" data-n="${parseInt(digits,10)}" data-path="${escA(path)}" title="Kopiera ${parseInt(digits,10)} · högerklicka för att byta namn">${t}</button>`:`<mark>${t}</mark>`;
+    h+=type==='num'?`<button class="num" data-n="${parseInt(digits,10)}" data-path="${escA(path)}" title="Kopiera ${parseInt(digits,10)} · högerklick: byt namn · Ctrl+högerklick: flytta till _Raderade">${t}</button>`:`<mark>${t}</mark>`;
     pos=en;
   }
   return h+esc(path.slice(pos));
@@ -693,9 +705,9 @@ async function doRename(path,newName){
   const sc=$('yearList').scrollTop;analyse();$('yearList').scrollTop=sc;
   return newPath;
 }
-function updRenBar(from,to){
+function updRenBar(msg){
   $('renBar').hidden=false;$('undoRen').hidden=!renameLog.length;
-  if(from)$('renMsg').textContent='Bytte namn: '+from.split('/').pop()+' → '+to.split('/').pop();
+  if(msg)$('renMsg').textContent=msg;
 }
 function startRename(path){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
@@ -718,7 +730,7 @@ async function saveRename(){
   $('renOk').disabled=true;
   try{
     const oldPath=renPath,np=await doRename(oldPath,newName);
-    renameLog.push({from:oldPath,to:np});updRenBar(oldPath,np);$('renDlg').close();
+    renameLog.push({type:'ren',from:oldPath,to:np});updRenBar('Bytte namn: '+oldPath.split('/').pop()+' → '+np.split('/').pop());$('renDlg').close();
   }catch(err){$('renErr').textContent=err.message}
   finally{$('renOk').disabled=false}
 }
@@ -728,15 +740,108 @@ $('renIn').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault()
 $('undoRen').onclick=async()=>{
   const last=renameLog[renameLog.length-1];if(!last)return;
   try{
-    await doRename(last.to,last.from.split('/').pop());
-    renameLog.pop();updRenBar();
-    $('renMsg').textContent='Ångrade: '+last.to.split('/').pop()+' → '+last.from.split('/').pop();
+    if(last.type==='del'){
+      await undoDelete(last);renameLog.pop();
+      updRenBar('Återställde: '+last.path.split('/').pop());
+    }else{
+      await doRename(last.to,last.from.split('/').pop());renameLog.pop();
+      updRenBar('Ångrade: '+last.to.split('/').pop()+' → '+last.from.split('/').pop());
+    }
   }catch(err){alert('Kunde inte ångra: '+err.message)}
 };
 document.addEventListener('contextmenu',e=>{
   const b=e.target.closest&&e.target.closest('button.num[data-path]');if(!b)return;
-  e.preventDefault();startRename(b.dataset.path);
+  e.preventDefault();
+  if(e.ctrlKey)startDelete(b.dataset.path);else startRename(b.dataset.path);
 });
+
+/* ---------- Ta bort = flytta till _Raderade (Ctrl+högerklick) ---------- */
+let delPath=null,delUrl=null;
+async function ensureWrite(){
+  const o={mode:'readwrite'};
+  if(await dirHandle.queryPermission(o)!=='granted'&&await dirHandle.requestPermission(o)!=='granted')throw new Error('Skrivåtkomst till katalogen nekades.');
+}
+async function getParent(path){const segs=path.split('/');segs.pop();let p=dirHandle;for(const sg of segs)p=await p.getDirectoryHandle(sg);return p}
+async function nameTaken(dir,name){try{await dir.getFileHandle(name);return true}catch(err){return err.name!=='NotFoundError'}}
+async function moveInto(handle,srcParent,srcName,dstParent,dstName){
+  if(typeof handle.move==='function'){try{await handle.move(dstParent,dstName);return handle}catch(err){}}
+  const src=await handle.getFile();
+  const nh=await dstParent.getFileHandle(dstName,{create:true});
+  const w=await nh.createWritable();
+  try{await w.write(src);await w.close()}
+  catch(err){try{await w.abort()}catch(_){}try{await dstParent.removeEntry(dstName)}catch(_){}throw err}
+  const chk=await nh.getFile();
+  if(chk.size!==src.size){try{await dstParent.removeEntry(dstName)}catch(_){}throw new Error('Kopian kunde inte verifieras. Originalet är orört.')}
+  await srcParent.removeEntry(srcName);
+  return nh;
+}
+async function doDelete(path){
+  const e=lastFiles&&lastFiles.find(f=>f.path===path);
+  if(!e||!e.handle||!dirHandle)throw new Error('Det här kräver Chrome/Edge och att katalogen valts med "Välj katalog…".');
+  await ensureWrite();
+  const parent=await getParent(path),oldName=e.name;
+  const trash=await dirHandle.getDirectoryHandle('_Raderade',{create:true});
+  const m=/(\.[^.]+)$/.exec(oldName),ext=m?m[1]:'',base=ext?oldName.slice(0,-ext.length):oldName;
+  let tn=oldName,k=2;
+  while(await nameTaken(trash,tn)){tn=base+' ('+k+')'+ext;k++}
+  await moveInto(e.handle,parent,oldName,trash,tn);
+  lastFiles.splice(lastFiles.indexOf(e),1);
+  // bildresultat: ta bort i läget
+  if(imgState){
+    const ri=imgState.recs.findIndex(r=>r.path===path);
+    if(ri>=0){
+      imgState.ok[ri]=0;imgState.recs[ri].deleted=true;
+      const prune=gs=>gs.map(g=>g.filter(i=>i!==ri)).filter(g=>g.length>1);
+      imgState.exact=prune(imgState.exact);imgState.sim=prune(imgState.sim);
+    }
+  }
+  document.querySelectorAll('#imgRes .pic').forEach(p=>{
+    const b=p.querySelector('button.num[data-path]');
+    if(!b||b.dataset.path!==path)return;
+    const grp=p.closest('.grp');p.remove();
+    const left=grp.querySelectorAll('.pic').length;
+    if(left<2)grp.remove();
+    else{const h3=grp.querySelector('h3');h3.textContent=h3.textContent.replace(/\d+ filer$/,left+' filer')}
+  });
+  if($('viewer').open){
+    vList=vList.filter(r=>r.path!==path);
+    if(!vList.length)$('viewer').close();
+    else{vIdx=Math.min(vIdx,vList.length-1);showV()}
+  }
+  const sc=$('yearList').scrollTop;analyse();$('yearList').scrollTop=sc;
+  return {path,name:oldName,trashName:tn};
+}
+async function undoDelete(rec){
+  await ensureWrite();
+  const trash=await dirHandle.getDirectoryHandle('_Raderade');
+  const th=await trash.getFileHandle(rec.trashName);
+  const name=rec.path.split('/').pop(),parent=await getParent(rec.path);
+  if(await nameTaken(parent,name))throw new Error('Det finns redan en fil med namnet "'+name+'" på ursprungsplatsen.');
+  const h=await moveInto(th,trash,rec.trashName,parent,name);
+  lastFiles.push({name,path:rec.path,handle:h});
+  if(imgState){resetImg();prog('Bildresultaten nollställdes när en fil återställdes. Kör sökningen igen (går snabbt tack vare cache).',0,1)}
+  const sc=$('yearList').scrollTop;analyse();$('yearList').scrollTop=sc;
+}
+function startDelete(path){
+  const e=lastFiles&&lastFiles.find(f=>f.path===path);
+  if(!e||!e.handle||!dirHandle){alert('Det här kräver Chrome/Edge och att katalogen valts med "Välj katalog…".');return}
+  delPath=path;$('delName').textContent=path;$('delErr').textContent='';
+  $('delImg').removeAttribute('src');
+  e.handle.getFile().then(f=>{if(delUrl)URL.revokeObjectURL(delUrl);delUrl=URL.createObjectURL(f);$('delImg').src=delUrl}).catch(()=>{});
+  $('delDlg').showModal();$('delCancel').focus();
+}
+$('delCancel').onclick=()=>$('delDlg').close();
+$('delDlg').addEventListener('close',()=>{if(delUrl){URL.revokeObjectURL(delUrl);delUrl=null}$('delImg').removeAttribute('src')});
+$('delOk').onclick=async()=>{
+  $('delOk').disabled=true;
+  try{
+    const r=await doDelete(delPath);
+    renameLog.push({type:'del',path:r.path,name:r.name,trashName:r.trashName});
+    updRenBar('Flyttade till _Raderade: '+r.name);
+    $('delDlg').close();
+  }catch(err){$('delErr').textContent=err.message}
+  finally{$('delOk').disabled=false}
+};
 
 /* ---------- Dela app (QR) ---------- */
 function makeQR(text){
