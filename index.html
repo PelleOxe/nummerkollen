@@ -32,6 +32,7 @@ button:disabled{opacity:.6;cursor:default}
 label{display:flex;gap:6px;align-items:center}
 #pfxOther{width:130px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
 #pfxOther:disabled{opacity:.5}
+#skipIn{width:200px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
 #ign{max-height:460px;overflow:auto}
 button.edit{padding:1px 8px;margin-right:8px;box-shadow:none;font-size:.85rem}
 .ignname{word-break:break-all}
@@ -129,6 +130,10 @@ dialog::backdrop{background:#0008}
     <label>Från <input type="number" id="from" min="0" placeholder="lägsta"></label>
     <label>Till <input type="number" id="to" min="0" placeholder="högsta"></label>
     <span class="muted small">Tomt = lägsta/högsta funna nummer</span>
+  </div>
+  <div class="row" style="margin-top:10px">
+    <label>Undvik tal i intervallet <input type="text" id="skipIn" placeholder="t.ex. 1900-1999" size="18" spellcheck="false" autocomplete="off"></label>
+    <span class="muted small" id="skipInfo">Flera intervall skrivs med komma, t.ex. 1900-1999, 2020-2030. Dessa tal visas inte som saknade.</span>
   </div>
   <p class="muted small" id="saved" hidden></p>
   <p class="muted small" style="margin:10px 0 0">Högerklicka på ett filnummer för att byta namn på filen. Ctrl+högerklick flyttar filen till mappen <b>_Raderade</b> (Chrome/Edge).</p>
@@ -244,7 +249,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.20';
+const VERSION='1.21';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -286,6 +291,25 @@ document.querySelectorAll('input[name=pfx]').forEach(r=>r.onchange=()=>{
   if(lastFiles)analyse();
 });
 $('pfxOther').oninput=()=>{clearTimeout(pfxTimer);pfxTimer=setTimeout(()=>{updPrefix(true);if(lastFiles)analyse()},300)};
+
+/* ---- Undvik tal i intervall (tas inte med som saknade) ---- */
+function parseSkip(txt){
+  const ranges=[],bad=[];
+  txt.split(/[;,]/).map(t=>t.trim()).filter(Boolean).forEach(t=>{
+    let m=/^(\d+)\s*[-–]\s*(\d+)$/.exec(t);
+    if(m){let a=+m[1],b=+m[2];if(a>b)[a,b]=[b,a];ranges.push([a,b]);return}
+    m=/^\d+$/.exec(t);
+    if(m){ranges.push([+t,+t]);return}
+    bad.push(t);
+  });
+  return {ranges,bad};
+}
+let skipTimer=null;
+try{$('skipIn').value=localStorage.getItem('nk-skip')||''}catch(e){}
+$('skipIn').oninput=()=>{
+  clearTimeout(skipTimer);
+  skipTimer=setTimeout(()=>{try{localStorage.setItem('nk-skip',$('skipIn').value)}catch(e){}if(lastFiles)analyse()},300);
+};
 let lastFiles=null,lastName='',dirHandle=null;
 
 let scanCount=0;
@@ -463,8 +487,14 @@ function analyse(){
   if(nums.length){
     const lo=$('from').value!==''?+$('from').value:nums[0];
     const hi=$('to').value!==''?+$('to').value:nums[nums.length-1];
-    $('rangeTxt').textContent=`Kontrollerat intervall: ${lo}–${hi}`;
-    for(let n=lo;n<=hi;n++)if(!map.has(n))missing.push(n);
+    const sk=parseSkip($('skipIn').value);let excl=0;
+    const inSkip=n=>sk.ranges.some(r=>n>=r[0]&&n<=r[1]);
+    for(let n=lo;n<=hi;n++){
+      if(map.has(n))continue;
+      if(inSkip(n))excl++;else missing.push(n);
+    }
+    $('rangeTxt').textContent=`Kontrollerat intervall: ${lo}–${hi}`+(excl?` · ${excl} tal undantagna (${$('skipIn').value.trim()})`:'');
+    $('skipInfo').textContent=sk.bad.length?'Kan inte tolka: '+sk.bad.join(', ')+' (skriv t.ex. 1900-1999)':'Flera intervall skrivs med komma, t.ex. 1900-1999, 2020-2030. Dessa tal visas inte som saknade.';
   }else $('rangeTxt').textContent='Inga matchande filer hittades.';
   $('miss').innerHTML=missing.length?ranges(missing).map(r=>`<button class="chip" data-n="${parseInt(r,10)}" title="Kopiera ${parseInt(r,10)}">${r}</button>`).join(''):(nums.length?'<span class="chip ok">Inga nummer saknas</span>':'');
   missText=missing.join('\n');
