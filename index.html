@@ -30,6 +30,11 @@ button:disabled{opacity:.6;cursor:default}
 @keyframes rot{to{transform:rotate(360deg)}}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 label{display:flex;gap:6px;align-items:center}
+#pfxOther{width:130px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+#pfxOther:disabled{opacity:.5}
+#ign{max-height:460px;overflow:auto}
+button.edit{padding:1px 8px;margin-right:8px;box-shadow:none;font-size:.85rem}
+.ignname{word-break:break-all}
 input[type=number]{width:110px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
 .stat{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
 .pill{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:.9rem}
@@ -104,12 +109,21 @@ dialog::backdrop{background:#0008}
 </header>
 
 <div class="card">
-  <p style="margin-top:0">Välj en katalog. Appen läser alla <b>jpg</b>- och <b>png</b>-filer vars namn börjar med ett tal följt av komma, t.ex. <i>2654, hej kalle.jpg</i>.</p>
+  <p style="margin-top:0">Välj en katalog. Appen läser alla <b>jpg</b>- och <b>png</b>-filer vars namn börjar med ett tal följt av komma, t.ex. <i>2654, hej kalle.jpg</i>. Har filerna ett prefix före numret (t.ex. <i>A_2654, …</i>) väljer du det nedan.</p>
   <div class="row">
     <button class="primary" id="pick">Välj katalog…</button>
     <button id="refresh" hidden>↻ Uppdatera listan</button>
     <span class="spin" id="spin" hidden></span><span class="muted small" id="busyTxt" hidden></span>
     <label><input type="checkbox" id="sub"> Inkludera undermappar</label>
+  </div>
+  <div class="row" style="margin-top:10px" id="pfxRow">
+    <b>Prefix:</b>
+    <label><input type="radio" name="pfx" value="" checked> Utan</label>
+    <label><input type="radio" name="pfx" value="A_"> A_</label>
+    <label><input type="radio" name="pfx" value="U_"> U_</label>
+    <label><input type="radio" name="pfx" value="W_"> W_</label>
+    <label><input type="radio" name="pfx" value="other"> Annat</label>
+    <input type="text" id="pfxOther" placeholder="skriv prefix" size="10" disabled spellcheck="false" autocomplete="off">
   </div>
   <div class="row" style="margin-top:10px">
     <label>Från <input type="number" id="from" min="0" placeholder="lägsta"></label>
@@ -157,7 +171,7 @@ dialog::backdrop{background:#0008}
   </div>
   <div class="card">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">Ignorerade bildfiler <span class="muted" id="ignN"></span></h2><button id="cpign">Kopiera</button></div>
-    <p class="muted small" style="margin:6px 0 8px">jpg/png-filer vars namn inte börjar med tal + komma.</p>
+    <p class="muted small" style="margin:6px 0 8px">jpg/png-filer vars namn inte börjar med (valt prefix och) tal + komma. Klicka ✎ eller högerklicka på namnet för att byta namn, så att filen blir godkänd.</p>
     <div id="ign"></div>
   </div>
  </div>
@@ -182,7 +196,8 @@ dialog::backdrop{background:#0008}
 
 <dialog id="renDlg">
   <h2>Byt namn</h2>
-  <p class="muted small" id="renOld" style="word-break:break-all;margin:0 0 10px"></p>
+  <p class="muted small" id="renOld" style="word-break:break-all;margin:0 0 6px"></p>
+  <p class="small" id="renHint" style="margin:0 0 10px"></p>
   <div class="row"><input type="text" id="renIn" spellcheck="false" autocomplete="off"><b id="renExt"></b></div>
   <p class="small" id="renErr"></p>
   <div class="row"><button class="primary" id="renOk">Spara</button><button id="renCancel">Avbryt</button></div>
@@ -229,7 +244,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.18';
+const VERSION='1.20';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -250,7 +265,27 @@ setTheme(saved||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'ligh
 $('theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
 
 /* ---------- Analys ---------- */
-const FILE_RE=/^\s*(\d+)\s*,.*\.(jpe?g|png)$/i;
+let FILE_RE=/^\s*(\d+)\s*,.*\.(jpe?g|png)$/i,NUM_RE=/^(\s*)(\d+)/,curPrefix='';
+function reEsc(t){return t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}
+function updPrefix(save){
+  const v=document.querySelector('input[name=pfx]:checked').value;
+  $('pfxOther').disabled=v!=='other';
+  curPrefix=(v==='other'?$('pfxOther').value:v).replace(/^\s+/,'');
+  FILE_RE=new RegExp('^\\s*'+reEsc(curPrefix)+'(\\d+)\\s*,.*\\.(jpe?g|png)$','i');
+  NUM_RE=new RegExp('^(\\s*'+reEsc(curPrefix)+')(\\d+)','i');
+  if(save)try{localStorage.setItem('nk-pfx',JSON.stringify({v,o:$('pfxOther').value}))}catch(e){}
+}
+try{
+  const sp=JSON.parse(localStorage.getItem('nk-pfx')||'null');
+  if(sp){const r=document.querySelector('input[name=pfx][value="'+sp.v+'"]');if(r){r.checked=true;$('pfxOther').value=sp.o||''}}
+}catch(e){}
+updPrefix(false);
+let pfxTimer=null;
+document.querySelectorAll('input[name=pfx]').forEach(r=>r.onchange=()=>{
+  updPrefix(true);if(r.value==='other'&&r.checked)$('pfxOther').focus();
+  if(lastFiles)analyse();
+});
+$('pfxOther').oninput=()=>{clearTimeout(pfxTimer);pfxTimer=setTimeout(()=>{updPrefix(true);if(lastFiles)analyse()},300)};
 let lastFiles=null,lastName='',dirHandle=null;
 
 let scanCount=0;
@@ -349,7 +384,7 @@ const YEAR_IN=/(^|[^\d])(1[4-9]\d\d|20\d\d)(?!\d)/g;
 const yOk=y=>y>=1400&&y<=2099;
 function markUp(path,name,ranges){
   const off=path.length-name.length,items=[];
-  const nm=/^(\s*)(\d+)/.exec(name);
+  const nm=NUM_RE.exec(name)||/^(\s*[^\d,]*?)(\d+)\s*,/.exec(name);
   if(nm)items.push([off+nm[1].length,off+nm[1].length+nm[2].length,'num',nm[2]]);
   ranges.forEach(r=>items.push([r[0]+off,r[1]+off,'mark']));
   items.sort((x,y)=>x[0]-y[0]);
@@ -422,7 +457,7 @@ function analyse(){
   skippedList.sort((a,b)=>a.localeCompare(b,'sv'));
   ignText=skippedList.join('\n');
   $('ignN').textContent='('+skippedList.length+')';
-  $('ign').innerHTML=skippedList.length?skippedList.map(n=>`<div class="ign">${esc(n)}</div>`).join(''):'<span class="chip ok">Inga ignorerade filer</span>';
+  $('ign').innerHTML=skippedList.length?skippedList.map(n=>`<div class="ign">${dirHandle?`<button class="edit" data-path="${escA(n)}" title="Byt namn">✎</button>`:''}<span class="ignname" data-path="${escA(n)}">${esc(n)}</span></div>`).join(''):'<span class="chip ok">Inga ignorerade filer</span>';
 
   const missing=[];
   if(nums.length){
@@ -685,6 +720,7 @@ $('vTitle').onclick=e=>{
 
 /* ---------- Byt namn (högerklick på filnumret) ---------- */
 const renameLog=[];let renPath=null;
+function keepScroll(fn){const a=$('yearList').scrollTop,b=$('ign').scrollTop;fn();$('yearList').scrollTop=a;$('ign').scrollTop=b}
 async function doRename(path,newName,quiet){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
   if(!e||!e.handle||!dirHandle)throw new Error('Namnbyte kräver Chrome/Edge och att katalogen valts med "Välj katalog…".');
@@ -726,7 +762,7 @@ async function doRename(path,newName,quiet){
     meta.innerHTML=markUp(newPath,newName,[]);if(bd)meta.appendChild(bd);
   });
   if($('viewer').open&&vList.some(r=>r.path===newPath))showV();
-  const sc=$('yearList').scrollTop;analyse();$('yearList').scrollTop=sc;
+  keepScroll(analyse);
   return newPath;
 }
 function updRenBar(msg){
@@ -739,6 +775,7 @@ function startRename(path){
   renPath=path;
   const m=/(\.[^.]+)$/.exec(e.name),ext=m?m[1]:'';
   $('renOld').textContent=path;$('renExt').textContent=ext;
+  $('renHint').textContent=FILE_RE.test(e.name)?'':'Den här filen räknas inte: namnet börjar inte med '+(curPrefix?'prefixet "'+curPrefix+'" + ':'')+'ett tal och komma. Börja t.ex. med '+curPrefix+'2654, …';
   $('renIn').value=ext?e.name.slice(0,-ext.length):e.name;$('renErr').textContent='';
   $('renDlg').showModal();
   const L=$('renIn').value.length;$('renIn').focus();$('renIn').setSelectionRange(L,L);
@@ -754,7 +791,7 @@ async function saveRename(){
   $('renOk').disabled=true;
   try{
     const oldPath=renPath,np=await doRename(oldPath,newName);
-    renameLog.push({type:'ren',from:oldPath,to:np});updRenBar('Bytte namn: '+oldPath.split('/').pop()+' → '+np.split('/').pop());$('renDlg').close();
+    renameLog.push({type:'ren',from:oldPath,to:np});updRenBar('Bytte namn: '+oldPath.split('/').pop()+' → '+np.split('/').pop()+(FILE_RE.test(newName)?'':' (följer ännu inte formatet, ligger kvar bland de ignorerade)'));$('renDlg').close();
   }catch(err){$('renErr').textContent=err.message}
   finally{$('renOk').disabled=false}
 }
@@ -782,8 +819,9 @@ $('undoRen').onclick=async()=>{
     }
   }catch(err){alert('Kunde inte ångra: '+err.message)}
 };
+$('ign').onclick=e=>{const b=e.target.closest('button.edit[data-path]');if(b)startRename(b.dataset.path)};
 document.addEventListener('contextmenu',e=>{
-  const b=e.target.closest&&e.target.closest('button.num[data-path]');if(!b)return;
+  const b=e.target.closest&&e.target.closest('button.num[data-path],.ignname[data-path]');if(!b)return;
   e.preventDefault();
   if(e.ctrlKey)startDelete(b.dataset.path);else startRename(b.dataset.path);
 });
@@ -841,7 +879,7 @@ async function doDelete(path){
     if(!vList.length)$('viewer').close();
     else{vIdx=Math.min(vIdx,vList.length-1);showV()}
   }
-  const sc=$('yearList').scrollTop;analyse();$('yearList').scrollTop=sc;
+  keepScroll(analyse);
   return {path,name:oldName,trashName:tn};
 }
 async function undoDelete(rec){
@@ -853,7 +891,7 @@ async function undoDelete(rec){
   const h=await moveInto(th,trash,rec.trashName,parent,name);
   lastFiles.push({name,path:rec.path,handle:h});
   if(imgState){resetImg();prog('Bildresultaten nollställdes när en fil återställdes. Kör sökningen igen (går snabbt tack vare cache).',0,1)}
-  const sc=$('yearList').scrollTop;analyse();$('yearList').scrollTop=sc;
+  keepScroll(analyse);
 }
 function startDelete(path){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
