@@ -32,6 +32,13 @@ button:disabled{opacity:.6;cursor:default}
 label{display:flex;gap:6px;align-items:center}
 #pfxOther{width:130px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
 #pfxOther:disabled{opacity:.5}
+#fnQ{flex:1;min-width:220px;font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
+#fnList{max-height:520px;overflow:auto;margin-top:8px}
+.fnrow{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--line);font-size:.9rem}
+.fnrow:first-child{border-top:0}
+.fnrow input[type=checkbox]{margin-top:5px}
+.fnrow button.edit{margin-right:0}
+.fnrow .ignname{cursor:pointer;flex:1;min-width:0}
 #skipIn{width:200px;font:inherit;padding:7px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
 #ign{max-height:460px;overflow:auto}
 button.edit{padding:1px 8px;margin-right:8px;box-shadow:none;font-size:.85rem}
@@ -196,16 +203,33 @@ dialog::backdrop{background:#0008}
   <div id="imgRes"></div>
 </div>
 
+<div class="card" id="findCard" hidden>
+  <h2>Sök i filnamn</h2>
+  <p class="muted small" style="margin:0 0 10px">Sök på text i filnamnen (jpg/png), till exempel ett felstavat ord. Markera de filer du vill rätta och klicka "Rätta markerade", eller klicka ✎ vid en enskild fil. Du skriver själv det rättade namnet.</p>
+  <div class="row">
+    <input type="search" id="fnQ" placeholder="Sök i filnamn…" spellcheck="false" autocomplete="off">
+    <label><input type="checkbox" id="fnCase"> Skilj på stora/små bokstäver</label>
+    <span class="muted small" id="fnCount"></span>
+  </div>
+  <div class="row" id="fnBar" hidden style="margin-top:10px">
+    <button id="fnAll">Markera alla visade</button>
+    <button id="fnNone">Avmarkera</button>
+    <button class="primary" id="fnFix" disabled>Rätta markerade (0)</button>
+  </div>
+  <div id="fnList"></div>
+</div>
+
 <footer>© <span id="yr"></span> Per Andersson</footer>
 </div>
 
 <dialog id="renDlg">
   <h2>Byt namn</h2>
   <p class="muted small" id="renOld" style="word-break:break-all;margin:0 0 6px"></p>
+  <p class="small" id="renQ" style="margin:0 0 6px;font-weight:600"></p>
   <p class="small" id="renHint" style="margin:0 0 10px"></p>
   <div class="row"><input type="text" id="renIn" spellcheck="false" autocomplete="off"><b id="renExt"></b></div>
   <p class="small" id="renErr"></p>
-  <div class="row"><button class="primary" id="renOk">Spara</button><button id="renCancel">Avbryt</button></div>
+  <div class="row"><button class="primary" id="renOk">Spara</button><button id="renSkip" hidden>Hoppa över</button><button id="renCancel">Avbryt</button></div>
 </dialog>
 
 <dialog id="bulkDlg">
@@ -249,7 +273,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.21';
+const VERSION='1.22';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -469,7 +493,7 @@ function analyse(){
     if(!map.has(n))map.set(n,[]);map.get(n).push(f.path);
   }
   const nums=[...map.keys()].sort((a,b)=>a-b);
-  $('out').hidden=false;$('imgCard').hidden=false;
+  $('out').hidden=false;$('imgCard').hidden=false;$('findCard').hidden=false;renderFind();
   $('catname').textContent='Katalog: '+lastName;
   $('stat').innerHTML=[`${matched} filer med nummer`,`${nums.length} olika nummer`,nums.length?`Lägsta: ${nums[0]}`:'',nums.length?`Högsta: ${nums[nums.length-1]}`:'',skippedList.length?`${skippedList.length} bild(er) utan nummer+komma ignorerade`:''].filter(Boolean).map(t=>`<span class="pill">${t}</span>`).join('');
 
@@ -749,8 +773,8 @@ $('vTitle').onclick=e=>{
 };
 
 /* ---------- Byt namn (högerklick på filnumret) ---------- */
-const renameLog=[];let renPath=null;
-function keepScroll(fn){const a=$('yearList').scrollTop,b=$('ign').scrollTop;fn();$('yearList').scrollTop=a;$('ign').scrollTop=b}
+const renameLog=[];let renPath=null,renQueue=[],renQi=0;
+function keepScroll(fn){const a=$('yearList').scrollTop,b=$('ign').scrollTop,c=$('fnList').scrollTop;fn();$('yearList').scrollTop=a;$('ign').scrollTop=b;$('fnList').scrollTop=c}
 async function doRename(path,newName,quiet){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
   if(!e||!e.handle||!dirHandle)throw new Error('Namnbyte kräver Chrome/Edge och att katalogen valts med "Välj katalog…".');
@@ -799,7 +823,7 @@ function updRenBar(msg){
   $('renBar').hidden=false;$('undoRen').hidden=!renameLog.length;
   if(msg)$('renMsg').textContent=msg;
 }
-function startRename(path){
+function startRename(path,selText){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
   if(!e||!e.handle||!dirHandle){alert('Namnbyte kräver Chrome/Edge och att katalogen valts med "Välj katalog…".');return}
   renPath=path;
@@ -807,26 +831,45 @@ function startRename(path){
   $('renOld').textContent=path;$('renExt').textContent=ext;
   $('renHint').textContent=FILE_RE.test(e.name)?'':'Den här filen räknas inte: namnet börjar inte med '+(curPrefix?'prefixet "'+curPrefix+'" + ':'')+'ett tal och komma. Börja t.ex. med '+curPrefix+'2654, …';
   $('renIn').value=ext?e.name.slice(0,-ext.length):e.name;$('renErr').textContent='';
-  $('renDlg').showModal();
-  const L=$('renIn').value.length;$('renIn').focus();$('renIn').setSelectionRange(L,L);
+  const inQ=renQueue.length>0;
+  $('renQ').textContent=inQ?'Fil '+(renQi+1)+' av '+renQueue.length:'';
+  $('renSkip').hidden=!inQ;
+  if(!$('renDlg').open)$('renDlg').showModal();
+  const L=$('renIn').value.length;$('renIn').focus();
+  let sa=L,sb=L;
+  if(selText){const ix=$('renIn').value.toLowerCase().indexOf(selText.toLowerCase());if(ix>=0){sa=ix;sb=ix+selText.length}}
+  $('renIn').setSelectionRange(sa,sb);
+}
+function afterSave(){
+  if(renQueue.length){renQi++;nextQueued()}else $('renDlg').close();
+}
+function nextQueued(){
+  while(renQi<renQueue.length){
+    const p=renQueue[renQi];
+    if(lastFiles.find(f=>f.path===p)){startRename(p,$('fnQ').value);return}
+    renQi++;
+  }
+  $('renDlg').close();
 }
 async function saveRename(){
-  const e=lastFiles.find(f=>f.path===renPath);if(!e){$('renDlg').close();return}
+  const e=lastFiles.find(f=>f.path===renPath);if(!e){afterSave();return}
   const ext=$('renExt').textContent,base=$('renIn').value.trim();
   if(!base){$('renErr').textContent='Namnet får inte vara tomt.';return}
   if(/[\\/:*?"<>|]/.test(base)){$('renErr').textContent='Ogiltiga tecken: \\ / : * ? " < > |';return}
   if(/[. ]$/.test(base)){$('renErr').textContent='Namnet får inte sluta med punkt eller blanksteg.';return}
   const newName=base+ext;
-  if(newName===e.name){$('renDlg').close();return}
+  if(newName===e.name){afterSave();return}
   $('renOk').disabled=true;
   try{
     const oldPath=renPath,np=await doRename(oldPath,newName);
-    renameLog.push({type:'ren',from:oldPath,to:np});updRenBar('Bytte namn: '+oldPath.split('/').pop()+' → '+np.split('/').pop()+(FILE_RE.test(newName)?'':' (följer ännu inte formatet, ligger kvar bland de ignorerade)'));$('renDlg').close();
+    renameLog.push({type:'ren',from:oldPath,to:np});updRenBar('Bytte namn: '+oldPath.split('/').pop()+' → '+np.split('/').pop()+(FILE_RE.test(newName)?'':' (följer ännu inte formatet, ligger kvar bland de ignorerade)'));afterSave();
   }catch(err){$('renErr').textContent=err.message}
   finally{$('renOk').disabled=false}
 }
 $('renOk').onclick=saveRename;
 $('renCancel').onclick=()=>$('renDlg').close();
+$('renSkip').onclick=()=>{renQi++;nextQueued()};
+$('renDlg').addEventListener('close',()=>{renQueue=[];renQi=0;$('renQ').textContent='';$('renSkip').hidden=true});
 $('renIn').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveRename()}});
 $('undoRen').onclick=async()=>{
   const last=renameLog[renameLog.length-1];if(!last)return;
@@ -979,6 +1022,57 @@ $('bulkOk').onclick=async()=>{
   bulkBusy=false;$('bulkCancel').textContent='Avbryt';$('bulkDlg').close();
   analyse();if(imgState)renderImg();
   updRenBar('Lade till ", '+tok+'" på '+done.length+' filer'+(bulkAbort?' (stoppad)':'')+(failed?' – '+failed+' hoppades över: '+firstErr:''));
+};
+
+/* ---------- Sök i filnamn ---------- */
+const fnSel=new Set(),FN_CAP=1000;let fnShown=[],fnTimer=null;
+function fnRegex(g){const q=$('fnQ').value;return q?new RegExp(reEsc(q),($('fnCase').checked?'':'i')+(g?'g':'')):null}
+function fnHl(path,re){
+  const name=path.split('/').pop(),pre=path.slice(0,path.length-name.length);
+  let h='',pos=0,m;re.lastIndex=0;
+  while((m=re.exec(name))){
+    if(!m[0].length){re.lastIndex++;continue}
+    h+=esc(name.slice(pos,m.index))+'<mark>'+esc(m[0])+'</mark>';pos=m.index+m[0].length;
+  }
+  return esc(pre)+h+esc(name.slice(pos));
+}
+function fnSelectedPaths(){return fnShown.filter(p=>fnSel.has(p))}
+function fnUpdBtn(){
+  const n=fnSelectedPaths().length;
+  $('fnFix').textContent='Rätta markerade ('+n+')';
+  $('fnFix').disabled=!n||!dirHandle;
+}
+function renderFind(){
+  if(!lastFiles)return;
+  const re=fnRegex(false),reG=fnRegex(true),list=$('fnList');
+  if(!re){list.innerHTML='';$('fnCount').textContent='';$('fnBar').hidden=true;fnShown=[];return}
+  const all=lastFiles.filter(f=>IMG_RE.test(f.name)&&($('sub').checked||!f.path.includes('/'))&&re.test(f.name))
+    .map(f=>f.path).sort((a,b)=>a.localeCompare(b,'sv',{numeric:true}));
+  fnShown=all.slice(0,FN_CAP);
+  $('fnCount').textContent=all.length+' träffar'+(all.length>FN_CAP?' (visar de första '+FN_CAP+' – förfina sökningen)':'');
+  $('fnBar').hidden=!all.length;
+  $('fnFix').hidden=!dirHandle;
+  list.innerHTML=fnShown.map(p=>`<div class="fnrow"><input type="checkbox" data-path="${escA(p)}"${fnSel.has(p)?' checked':''}>${dirHandle?`<button class="edit" data-path="${escA(p)}" title="Byt namn">✎</button>`:''}<span class="ignname" data-path="${escA(p)}">${fnHl(p,reG)}</span></div>`).join('');
+  fnUpdBtn();
+}
+$('fnQ').oninput=()=>{clearTimeout(fnTimer);fnTimer=setTimeout(renderFind,200)};
+$('fnCase').onchange=renderFind;
+$('fnList').addEventListener('change',e=>{
+  const c=e.target.closest('input[type=checkbox][data-path]');if(!c)return;
+  if(c.checked)fnSel.add(c.dataset.path);else fnSel.delete(c.dataset.path);
+  fnUpdBtn();
+});
+$('fnList').addEventListener('click',e=>{
+  const ed=e.target.closest('button.edit[data-path]');
+  if(ed){startRename(ed.dataset.path,$('fnQ').value);return}
+  const nm=e.target.closest('.ignname[data-path]');
+  if(nm){const c=nm.parentElement.querySelector('input[type=checkbox]');c.checked=!c.checked;c.dispatchEvent(new Event('change',{bubbles:true}))}
+});
+$('fnAll').onclick=()=>{fnShown.forEach(p=>fnSel.add(p));document.querySelectorAll('#fnList input[type=checkbox]').forEach(c=>c.checked=true);fnUpdBtn()};
+$('fnNone').onclick=()=>{fnShown.forEach(p=>fnSel.delete(p));document.querySelectorAll('#fnList input[type=checkbox]').forEach(c=>c.checked=false);fnUpdBtn()};
+$('fnFix').onclick=()=>{
+  const paths=fnSelectedPaths();if(!paths.length)return;
+  renQueue=paths;renQi=0;nextQueued();
 };
 
 /* ---------- Dela app (QR) ---------- */
