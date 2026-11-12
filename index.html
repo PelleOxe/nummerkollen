@@ -74,7 +74,8 @@ button.num.done{background:var(--okbg);color:var(--ok)}
 .pic .dim{color:var(--muted)}
 .badge{display:inline-block;background:var(--okbg);color:var(--ok);border-radius:6px;padding:0 6px;font-size:.75rem;margin-left:4px}
 progress{width:100%;height:10px}
-#renDlg{max-width:none;width:min(560px,94vw);text-align:left}
+#renDlg{max-width:none;width:min(560px,94vw);max-height:94vh;overflow:auto;text-align:left}
+#renImg{display:block;max-width:100%;max-height:min(40vh,320px);margin:0 auto 12px;border-radius:6px;object-fit:contain;background:var(--bg)}
 #renIn{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);flex:1;min-width:240px}
 #renErr{color:var(--warn);min-height:1.2em;margin:8px 0}
 select{font:inherit;padding:6px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
@@ -227,6 +228,7 @@ dialog::backdrop{background:#0008}
   <p class="muted small" id="renOld" style="word-break:break-all;margin:0 0 6px"></p>
   <p class="small" id="renQ" style="margin:0 0 6px;font-weight:600"></p>
   <p class="small" id="renHint" style="margin:0 0 10px"></p>
+  <img id="renImg" alt="" hidden>
   <div class="row"><input type="text" id="renIn" spellcheck="false" autocomplete="off"><b id="renExt"></b></div>
   <p class="small" id="renErr"></p>
   <div class="row"><button class="primary" id="renOk">Spara</button><button id="renSkip" hidden>Hoppa över</button><button id="renCancel">Avbryt</button></div>
@@ -273,7 +275,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.22';
+const VERSION='1.23';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -773,7 +775,16 @@ $('vTitle').onclick=e=>{
 };
 
 /* ---------- Byt namn (högerklick på filnumret) ---------- */
-const renameLog=[];let renPath=null,renQueue=[],renQi=0;
+const renameLog=[];let renPath=null,renQueue=[],renQi=0,renUrl=null,renImgTok=0;
+function renImgClear(){if(renUrl){URL.revokeObjectURL(renUrl);renUrl=null}$('renImg').removeAttribute('src');$('renImg').hidden=true}
+function renImgLoad(handle){
+  const tok=++renImgTok;renImgClear();
+  handle.getFile().then(f=>{
+    if(tok!==renImgTok)return;
+    renUrl=URL.createObjectURL(f);
+    const im=$('renImg');im.onload=()=>{im.hidden=false};im.onerror=()=>{im.hidden=true};im.src=renUrl;
+  }).catch(()=>{});
+}
 function keepScroll(fn){const a=$('yearList').scrollTop,b=$('ign').scrollTop,c=$('fnList').scrollTop;fn();$('yearList').scrollTop=a;$('ign').scrollTop=b;$('fnList').scrollTop=c}
 async function doRename(path,newName,quiet){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
@@ -831,6 +842,7 @@ function startRename(path,selText){
   $('renOld').textContent=path;$('renExt').textContent=ext;
   $('renHint').textContent=FILE_RE.test(e.name)?'':'Den här filen räknas inte: namnet börjar inte med '+(curPrefix?'prefixet "'+curPrefix+'" + ':'')+'ett tal och komma. Börja t.ex. med '+curPrefix+'2654, …';
   $('renIn').value=ext?e.name.slice(0,-ext.length):e.name;$('renErr').textContent='';
+  renImgLoad(e.handle);
   const inQ=renQueue.length>0;
   $('renQ').textContent=inQ?'Fil '+(renQi+1)+' av '+renQueue.length:'';
   $('renSkip').hidden=!inQ;
@@ -869,7 +881,7 @@ async function saveRename(){
 $('renOk').onclick=saveRename;
 $('renCancel').onclick=()=>$('renDlg').close();
 $('renSkip').onclick=()=>{renQi++;nextQueued()};
-$('renDlg').addEventListener('close',()=>{renQueue=[];renQi=0;$('renQ').textContent='';$('renSkip').hidden=true});
+$('renDlg').addEventListener('close',()=>{renImgTok++;renImgClear();renQueue=[];renQi=0;$('renQ').textContent='';$('renSkip').hidden=true});
 $('renIn').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();saveRename()}});
 $('undoRen').onclick=async()=>{
   const last=renameLog[renameLog.length-1];if(!last)return;
