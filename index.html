@@ -193,7 +193,7 @@ dialog::backdrop{background:#0008}
 
 <div class="card" id="imgCard" hidden>
   <h2>Bilddubbletter</h2>
-  <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att dela varje bild i 4×4 rutor och jämföra medelfärgen i rutorna. Det tål små kameraförflyttningar, inzoomning och ändrad exponering. Toleransen anger högsta tillåtna skillnad i procent. Inget laddas upp och inget ändras eller raderas.</p>
+  <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att jämföra tre mått: medelfärgen i 4×4 rutor, ljuset i 8×8 rutor och kanternas riktning. Alla tre måste stämma, vilket tål små kameraförflyttningar och ändrad exponering men håller isär olika motiv. Toleransen anger högsta tillåtna avstånd. Inget laddas upp och inget ändras eller raderas.</p>
   <div class="refsec">
     <h3 style="margin:0 0 6px;font-size:1rem">Sök dubbletter till en vald bild</h3>
     <p class="muted small" style="margin:0 0 8px">Välj en bild (den kan ligga var som helst). Appen letar sedan efter exakta kopior och liknande bilder i den valda katalogen.</p>
@@ -291,7 +291,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.26';
+const VERSION='1.27';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -588,36 +588,61 @@ async function sha256(file){
 
 const hc=document.createElement('canvas');hc.width=136;hc.height=128;
 const hx=hc.getContext('2d',{willReadFrequently:true});
-const FP_LEN=49,FP_FAIL=[2].concat(new Array(48).fill(0)),TOL_STEP=0.009;
+const FP_LEN=241,FP_STRIDE=240,FP_FAIL=(()=>{const f=new Uint8Array(241);f[0]=2;return f})();
+const SC_L=0.061,SC_G=0.133,SC_H=0.217; // normeringar: 1,0 motsvarar ungefär den skillnad som en förflyttad bild får
+const tolThr=T=>0.15+0.12*T;
 async function dhash(file){
-  // Färglayout: bilden delas i 4x4 rutor och medelfärgen (R,G,B) i varje ruta sparas. Returnerar [platt?, 48 värden 0-255].
-  // Tål små kameraförflyttningar, inzoomning och ändrad exponering betydligt bättre än bitbaserade fingeravtryck.
+  // Tre mått som alla tål små kameraförflyttningar och ändrad exponering. Returnerar Uint8Array(241): [platt?, 48 färglayout, 64 ljushet 8x8, 128 kantriktningar].
   let bmp;
   try{bmp=await createImageBitmap(file,{resizeWidth:136,resizeHeight:128,resizeQuality:'medium'})}
   catch(e){bmp=await createImageBitmap(file)}
   hx.fillStyle='#fff';hx.fillRect(0,0,136,128);hx.drawImage(bmp,0,0,136,128);if(bmp.close)bmp.close();
-  const d=hx.getImageData(0,0,136,128).data,col=new Float32Array(48),lum=new Float32Array(16);
-  for(let y=0;y<128;y++)for(let x=0;x<136;x++){
-    const i=(y*136+x)*4,c=(Math.floor(y/32)*4+Math.floor(x/34))*3;
-    col[c]+=d[i];col[c+1]+=d[i+1];col[c+2]+=d[i+2];
+  const W=136,H=128,d=hx.getImageData(0,0,W,H).data,Y=new Float32Array(W*H),col=new Float32Array(48),g8=new Float32Array(64);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const i=(y*W+x)*4,L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2],c=(Math.floor(y/32)*4+Math.floor(x/34))*3;
+    Y[y*W+x]=L;col[c]+=d[i];col[c+1]+=d[i+1];col[c+2]+=d[i+2];
+    g8[Math.min(7,y>>4)*8+Math.min(7,Math.floor(x/17))]+=L;
   }
-  const out=[0];let mn=1e9,mx=-1;
+  const out=new Uint8Array(241);let mn=1e9,mx=-1;
   for(let c=0;c<16;c++){
-    const r=col[c*3]/(32*34),g=col[c*3+1]/(32*34),b2=col[c*3+2]/(32*34),L=0.299*r+0.587*g+0.114*b2;
+    const r=col[c*3]/1088,g=col[c*3+1]/1088,b=col[c*3+2]/1088,L=0.299*r+0.587*g+0.114*b;
     if(L<mn)mn=L;if(L>mx)mx=L;
-    out.push(Math.round(r),Math.round(g),Math.round(b2));
+    out[1+c*3]=Math.round(r);out[2+c*3]=Math.round(g);out[3+c*3]=Math.round(b);
   }
-  out[0]=(mx-mn)<12?1:0; // nästan enfärgad: kan inte jämföras visuellt (bara exakta kopior)
+  out[0]=(mx-mn)<12?1:0; // nästan enfärgad: bara exakta kopior kan hittas
+  let m=0;for(let i=0;i<64;i++){g8[i]/=272;m+=g8[i]}m/=64;
+  let sd=0;for(let i=0;i<64;i++)sd+=(g8[i]-m)*(g8[i]-m);sd=Math.sqrt(sd/64)+1e-6;
+  for(let i=0;i<64;i++)out[49+i]=Math.max(0,Math.min(255,Math.round((g8[i]-m)/sd*40)+128));
+  const hog=new Float32Array(128);let tot=0;
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){
+    const gx=Y[y*W+x+1]-Y[y*W+x-1],gy=Y[(y+1)*W+x]-Y[(y-1)*W+x],mag=Math.hypot(gx,gy);
+    let ang=Math.atan2(gy,gx);if(ang<0)ang+=Math.PI;
+    hog[(Math.floor(y/32)*4+Math.floor(x/34))*8+Math.min(7,Math.floor(ang/Math.PI*8))]+=mag;tot+=mag;
+  }
+  tot=tot||1;
+  for(let i=0;i<128;i++)out[113+i]=Math.min(255,Math.round(hog[i]/tot*1500));
   return out;
 }
-// Skillnad mellan två bilder = medelavvikelse i färglayouten (0 = lika, 1 = helt olika). Toleransen T motsvarar T*0,9 %.
-function nearLayout(L,i,j,lim){
-  let s=0;const bi=i*48,bj=j*48;
-  for(let k=0;k<48;k++){s+=Math.abs(L[bi+k]-L[bj+k]);if(s>lim)return false}
+// Skillnad = det sämsta av tre normerade mått (färglayout, ljushet 8x8, kantriktningar). Alla tre måste ligga inom toleransen.
+function layoutDist(L,i,j,Rf){ // Rf: valfri referensvektor i stället för post j
+  const a=i*FP_STRIDE,b=Rf?0:j*FP_STRIDE,B=Rf||L;
+  let sl=0,sg=0,sh=0;
+  for(let k=0;k<48;k++)sl+=Math.abs(L[a+k]-B[b+k]);
+  for(let k=48;k<112;k++)sg+=Math.abs(L[a+k]-B[b+k]);
+  for(let k=112;k<240;k++)sh+=Math.abs(L[a+k]-B[b+k]);
+  return Math.max(sl/48/255/SC_L,sg/10240/SC_G,sh/3000/SC_H);
+}
+function nearLayout(L,i,j,thr){
+  const a=i*FP_STRIDE,b=j*FP_STRIDE;
+  let s=0;const l1=thr*SC_L*48*255;
+  for(let k=0;k<48;k++){s+=Math.abs(L[a+k]-L[b+k]);if(s>l1)return false}
+  s=0;const l2=thr*SC_G*10240;
+  for(let k=48;k<112;k++){s+=Math.abs(L[a+k]-L[b+k]);if(s>l2)return false}
+  s=0;const l3=thr*SC_H*3000;
+  for(let k=112;k<240;k++){s+=Math.abs(L[a+k]-L[b+k]);if(s>l3)return false}
   return true;
 }
-const tolLim=T=>T*TOL_STEP*48*255;
-const tolTxt=T=>T+' (≤ '+(T*TOL_STEP*100).toFixed(1).replace('.',',')+' % skillnad)';
+const tolTxt=T=>T+' (avstånd ≤ '+tolThr(T).toFixed(1).replace('.',',')+')';
 
 async function runImg(){
   const imgs=lastFiles.filter(f=>IMG_RE.test(f.name)&&($('sub').checked||!f.path.includes('/')));
@@ -655,7 +680,7 @@ async function runImg(){
   const bySha=new Map();
   recs.forEach((r,i)=>{if(r.sha){let a=bySha.get(r.sha);if(!a)bySha.set(r.sha,a=[]);a.push(i)}});
   const exact=[...bySha.values()].filter(a=>a.length>1);
-  const LAY=new Uint8Array(n*48),ok=new Uint8Array(n);
+  const LAY=new Uint8Array(n*FP_STRIDE),ok=new Uint8Array(n);
   imgState={recs,exact,sim:[],LAY,ok,errors:0,partial:false};
   renderImg();
   await kvSet('imgcache',cache);
@@ -669,7 +694,7 @@ async function runImg(){
       cache.ph[r.key]=v;
       if(computed%400===0)await kvSet('imgcache',cache);
     }
-    if(v[0]===0){LAY.set(v.slice(1),i*48);ok[i]=1}
+    if(v[0]===0){LAY.set(v.subarray?v.subarray(1):v.slice(1),i*FP_STRIDE);ok[i]=1}
     const eta=computed>20?' · ca '+fmtTime((Date.now()-t0)/computed*(n-i)/1000)+' kvar':'';
     await ui('Läser av bilder… '+i+' / '+n+eta,i,n);
     if(imgAbort){aborted=true;break}
@@ -683,7 +708,7 @@ async function runImg(){
 
 async function groupSimilar(){
   const st=imgState;if(!st)return;
-  const token=++simToken,{recs,LAY,ok}=st,n=recs.length,T=+$('tol').value,chain=$('chain').checked,lim=tolLim(T);
+  const token=++simToken,{recs,LAY,ok}=st,n=recs.length,T=+$('tol').value,chain=$('chain').checked,lim=tolThr(T);
   let groups=[];
   if(chain){ // kedjor: A~B och B~C ger gruppen A,B,C
     const par=new Int32Array(n);for(let i=0;i<n;i++)par[i]=i;
@@ -712,43 +737,91 @@ async function groupSimilar(){
   renderImg();
 }
 
-function drawThumb(r,p){
+const thumbJobs=[];let thumbActive=0;
+function pumpThumbs(){
+  while(thumbActive<4&&thumbJobs.length){
+    const j=thumbJobs.shift();thumbActive++;
+    j().then(()=>{},()=>{}).then(()=>{thumbActive--;pumpThumbs()});
+  }
+}
+const thumbObs=('IntersectionObserver' in window)?new IntersectionObserver(es=>{
+  es.forEach(e=>{if(e.isIntersecting){thumbObs.unobserve(e.target);thumbJobs.push(e.target._job);pumpThumbs()}});
+},{rootMargin:'400px'}):null;
+function lazyThumb(r,p){ // ritar miniatyren först när rutan syns, högst 4 åt gången
+  p._job=()=>drawThumb(r,p);
+  if(thumbObs)thumbObs.observe(p);else{thumbJobs.push(p._job);pumpThumbs()}
+}
+async function imgDims(r){ // mått från filens huvud (snabbt), annars avkodning
+  if(r.w)return {w:r.w,h:r.h};
+  try{
+    const buf=new Uint8Array(await r.file.slice(0,262144).arrayBuffer());let d=null;
+    if(buf[0]===0x89&&buf[1]===0x50){d={w:((buf[16]<<24)|(buf[17]<<16)|(buf[18]<<8)|buf[19])>>>0,h:((buf[20]<<24)|(buf[21]<<16)|(buf[22]<<8)|buf[23])>>>0}}
+    else if(buf[0]===0xFF&&buf[1]===0xD8){
+      let i=2;
+      while(i+9<buf.length){
+        if(buf[i]!==0xFF){i++;continue}
+        const m=buf[i+1];
+        if(m===0xD8||m===0x01||(m>=0xD0&&m<=0xD7)){i+=2;continue}
+        if(m===0xFF){i++;continue}
+        const len=(buf[i+2]<<8)|buf[i+3];
+        if(m>=0xC0&&m<=0xCF&&m!==0xC4&&m!==0xC8&&m!==0xCC){d={h:(buf[i+5]<<8)|buf[i+6],w:(buf[i+7]<<8)|buf[i+8]};break}
+        i+=2+len;
+      }
+    }
+    if(d&&d.w&&d.h){r.w=d.w;r.h=d.h;return d}
+  }catch(e){}
+  try{const bm=await createImageBitmap(r.file);r.w=bm.width;r.h=bm.height;if(bm.close)bm.close();return {w:r.w,h:r.h}}catch(e){return null}
+}
+async function drawThumb(r,p){
   const cv=p.querySelector('canvas'),cx=cv.getContext('2d'),dim=p.querySelector('.dim');
-  return createImageBitmap(r.file).then(bmp=>{
-    r.w=bmp.width;r.h=bmp.height;
+  try{
+    let bmp;
+    try{bmp=await createImageBitmap(r.file,{resizeWidth:380,resizeQuality:'medium'})} // nedskalad avkodning går mycket snabbare
+    catch(e){bmp=await createImageBitmap(r.file)}
     const k=Math.min(190/bmp.width,140/bmp.height),w=bmp.width*k,h=bmp.height*k;
     cx.drawImage(bmp,(190-w)/2,(140-h)/2,w,h);if(bmp.close)bmp.close();
-    dim.textContent=r.w+'×'+r.h+' px · '+fmtSize(r.size);
-  }).catch(()=>{dim.textContent='Kunde inte visas · '+fmtSize(r.size)});
+    const dm=await imgDims(r);
+    dim.textContent=(dm?dm.w+'×'+dm.h+' px · ':'')+fmtSize(r.size);
+  }catch(e){dim.textContent='Kunde inte visas · '+fmtSize(r.size)}
 }
 
 function renderGroups(el,groups,recs){
   el.innerHTML='';
   if(!groups.length){el.innerHTML='<span class="chip ok">Inga grupper</span>';return}
-  const sorted=groups.map(g=>g.slice().sort((a,b)=>recs[a].path.localeCompare(recs[b].path,'sv')))
-    .sort((a,b)=>recs[a[0]].path.localeCompare(recs[b[0]].path,'sv'));
-  let shown=0;const PAGE=20;
+  const sorted=groups.map(g=>g.slice().sort((a,b)=>recs[a].path.localeCompare(recs[b].path,'sv',{numeric:true})))
+    .sort((a,b)=>recs[a[0]].path.localeCompare(recs[b[0]].path,'sv',{numeric:true}));
+  let shown=0;const PAGE=20,PICS=24;
   const more=document.createElement('button');more.style.marginTop='10px';
+  function addPics(g,pics,from,btn){
+    const end=Math.min(from+PICS,g.length),batch=[];
+    for(let k=from;k<end;k++){
+      const r=recs[g[k]],p=document.createElement('div');p.className='pic';
+      p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+markUp(r.path,r.name,[])+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
+      const cv=p.querySelector('canvas');cv.title='Dubbelklicka för att visa större';
+      const idx=k;cv.ondblclick=()=>openViewer(g.map(x=>recs[x]),idx);
+      pics.insertBefore(p,btn);batch.push([r,p]);lazyThumb(r,p);
+    }
+    if(g.length<=PICS*3){ // märk den största bilden (bara i små grupper)
+      Promise.all(batch.map(([r])=>imgDims(r))).then(()=>{
+        const px=batch.map(([r])=>(r.w||0)*(r.h||0));
+        if(new Set(px).size>1){const k=px.indexOf(Math.max(...px));
+          const b=document.createElement('span');b.className='badge';b.textContent='störst';batch[k][1].querySelector('.meta').appendChild(b)}
+      });
+    }
+    return end;
+  }
   function add(){
     const end=Math.min(shown+PAGE,sorted.length);
     for(;shown<end;shown++){
       const g=sorted[shown],div=document.createElement('div');div.className='grp';
       div.innerHTML='<h3>Grupp '+(shown+1)+' · '+g.length+' filer</h3>';
       const pics=document.createElement('div');pics.className='pics';
-      const els=[];let lastP=null;
-      g.forEach(i=>{
-        const r=recs[i],p=document.createElement('div');p.className='pic';
-        p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+markUp(r.path,r.name,[])+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
-        pics.appendChild(p);els.push([r,p]);
-        const cvEl=p.querySelector('canvas');cvEl.title='Dubbelklicka för att visa större';
-        cvEl.ondblclick=()=>openViewer(g.map(x=>recs[x]),g.indexOf(i));
-        lastP=thumbQ=thumbQ.then(()=>drawThumb(r,p));
-      });
-      lastP.then(()=>{
-        const px=els.map(([r])=>(r.w||0)*(r.h||0));
-        if(new Set(px).size>1){const k=px.indexOf(Math.max(...px));
-          const b=document.createElement('span');b.className='badge';b.textContent='störst';els[k][1].querySelector('.meta').appendChild(b)}
-      });
+      let from=0;
+      const btn=document.createElement('button');btn.style.alignSelf='center';
+      const upd=()=>{btn.hidden=from>=g.length;btn.textContent='Visa fler i gruppen ('+(g.length-from)+' kvar)'};
+      btn.onclick=()=>{from=addPics(g,pics,from,btn);upd()};
+      pics.appendChild(btn);
+      from=addPics(g,pics,0,btn);upd();
       div.appendChild(pics);el.insertBefore(div,more);
     }
     more.hidden=shown>=sorted.length;
@@ -1092,7 +1165,7 @@ async function refHashAll(){
     if(Date.now()-last>80){last=Date.now();refShow('Läser filinformation… '+i+' / '+imgs.length,i,imgs.length);await tick()}
     if(refAbort)throw {aborted:true};
   }
-  const n=recs.length,LAY=new Uint8Array(n*48),ok=new Uint8Array(n);
+  const n=recs.length,LAY=new Uint8Array(n*FP_STRIDE),ok=new Uint8Array(n);
   const t0=Date.now();let computed=0;last=0;
   for(let i=0;i<n;i++){
     const r=recs[i];let v=cache.ph[r.key];
@@ -1101,7 +1174,7 @@ async function refHashAll(){
       cache.ph[r.key]=v;
       if(computed%400===0)await kvSet('imgcache',cache);
     }
-    if(v[0]===0){LAY.set(v.slice(1),i*48);ok[i]=1}
+    if(v[0]===0){LAY.set(v.subarray?v.subarray(1):v.slice(1),i*FP_STRIDE);ok[i]=1}
     if(Date.now()-last>80){
       last=Date.now();
       const eta=computed>20?' · ca '+fmtTime((Date.now()-t0)/computed*(n-i)/1000)+' kvar':'';
@@ -1128,9 +1201,8 @@ async function runRef(file){
       const r=H.recs[i];
       if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;continue}
       if(refOk&&H.ok[i]){
-        let sd=0;for(let k=0;k<48;k++)sd+=Math.abs(rh[1+k]-H.LAY[i*48+k]);
-        ldist[i]=sd/48/255;
-      }else ldist[i]=9;
+        ldist[i]=layoutDist(H.LAY,i,0,rh.subarray(1));
+      }else ldist[i]=99;
       if(r.size===file.size){
         try{const sh=r.sha||cache.sha[r.key]||(cache.sha[r.key]=await sha256(r.file));if(sh===rsha)ident[i]=1}catch(e){}
       }
@@ -1149,7 +1221,7 @@ function renderRef(){
   const T=+$('tol1').value,el=$('refRes'),idx=[];
   for(let i=0;i<st.recs.length;i++){
     if(st.self[i])continue;
-    if(st.ident[i]||(st.refOk&&st.ok[i]&&st.ldist[i]<=T*TOL_STEP))idx.push(i);
+    if(st.ident[i]||(st.refOk&&st.ok[i]&&st.ldist[i]<=tolThr(T)))idx.push(i);
   }
   idx.sort((a,b)=>st.ident[b]-st.ident[a]||st.ldist[a]-st.ldist[b]||st.recs[a].path.localeCompare(st.recs[b].path,'sv',{numeric:true}));
   const note=st.refOk?'':'<p class="small muted">Den valda bilden är nästan enfärgad eller kunde inte läsas av, så bara exakt likadana filer kan hittas.</p>';
@@ -1166,12 +1238,12 @@ function renderRef(){
     if(k===0){nm=esc(r.name);badge='<span class="badge">vald bild</span>'}
     else{
       const i=idx[k-1];nm=markUp(r.path,r.name,[]);
-      badge=st.ident[i]?'<span class="badge">identisk</span>':'<span class="badge" title="Skillnad i färglayout (0 % = lika). Toleransen anger högsta tillåtna skillnad.">skillnad '+(st.ldist[i]*100).toFixed(1).replace('.',',')+' %</span>';
+      badge=st.ident[i]?'<span class="badge">identisk</span>':'<span class="badge" title="Avstånd mellan bilderna (0 = lika). Toleransen anger högsta tillåtna avstånd.">avstånd '+st.ldist[i].toFixed(2).replace('.',',')+'</span>';
     }
     p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+nm+badge+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
     const cv=p.querySelector('canvas');cv.title='Dubbelklicka för att visa större';
     cv.ondblclick=()=>openViewer(list,k);
-    pics.appendChild(p);thumbQ=thumbQ.then(()=>drawThumb(r,p));
+    pics.appendChild(p);lazyThumb(r,p);
   }
   function add(){
     const end=Math.min(shown+PAGE,list.length-1);
