@@ -74,6 +74,7 @@ button.num.done{background:var(--okbg);color:var(--ok)}
 .pic .dim{color:var(--muted)}
 .badge{display:inline-block;background:var(--okbg);color:var(--ok);border-radius:6px;padding:0 6px;font-size:.75rem;margin-left:4px}
 progress{width:100%;height:10px}
+.refsec{border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:14px}
 #renDlg{max-width:none;width:min(560px,94vw);max-height:94vh;overflow:auto;text-align:left}
 #renImg{display:block;max-width:100%;max-height:min(40vh,320px);margin:0 auto 12px;border-radius:6px;object-fit:contain;background:var(--bg)}
 #renIn{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);flex:1;min-width:240px}
@@ -193,6 +194,20 @@ dialog::backdrop{background:#0008}
 <div class="card" id="imgCard" hidden>
   <h2>Bilddubbletter</h2>
   <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att jämföra ett litet visuellt fingeravtryck av varje bild. Inget laddas upp och inget ändras eller raderas.</p>
+  <div class="refsec">
+    <h3 style="margin:0 0 6px;font-size:1rem">Sök dubbletter till en vald bild</h3>
+    <p class="muted small" style="margin:0 0 8px">Välj en bild (den kan ligga var som helst). Appen letar sedan efter exakta kopior och liknande bilder i den valda katalogen.</p>
+    <div class="row">
+      <button id="refPick">Välj bild…</button>
+      <button id="refStop" hidden>Avbryt</button>
+      <label>Tolerans <input type="range" id="tol1" min="0" max="14" value="5"> <b id="tol1V">5</b></label>
+      <span class="muted small" id="refName"></span>
+    </div>
+    <div id="refProgWrap" hidden style="margin-top:10px"><progress id="refProg" max="1" value="0"></progress><div class="muted small" id="refTxt"></div></div>
+    <div id="refRes"></div>
+    <input type="file" id="refFile" accept="image/jpeg,image/png" hidden>
+  </div>
+  <h3 style="margin:0 0 6px;font-size:1rem">Sök dubbletter i hela katalogen</h3>
   <div class="row">
     <button class="primary" id="imgGo">Sök bilddubbletter</button>
     <button id="imgStop" hidden>Avbryt</button>
@@ -275,7 +290,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.23';
+const VERSION='1.24';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -550,10 +565,10 @@ $('cpdup').onclick=e=>copy(dupText,e.target);
 $('cpmiss').onclick=e=>copy(missText,e.target);
 
 /* ---------- Bilddubbletter ---------- */
-let imgAbort=false,imgState=null,thumbQ=Promise.resolve(),simToken=0;
+let imgAbort=false,imgState=null,thumbQ=Promise.resolve(),simToken=0,refState=null,refAbort=false,refBusy=false;
 const tick=()=>new Promise(r=>setTimeout(r,0));
 const IMG_RE=/\.(jpe?g|png)$/i;
-function resetImg(){simToken++;imgState=null;$('imgRes').innerHTML='';$('imgStat').innerHTML='';$('imgProgWrap').hidden=true}
+function resetImg(){simToken++;imgState=null;refState=null;$('refRes').innerHTML='';$('refProgWrap').hidden=true;$('refName').textContent='';$('imgRes').innerHTML='';$('imgStat').innerHTML='';$('imgProgWrap').hidden=true}
 function prog(txt,v,max){$('imgProgWrap').hidden=false;$('imgProg').max=max||1;$('imgProg').value=v||0;$('imgTxt').textContent=txt}
 function fmtSize(b){return b>=1048576?(b/1048576).toFixed(1)+' MB':Math.max(1,Math.round(b/1024))+' kB'}
 function fmtTime(sec){sec=Math.round(sec);return sec>=60?Math.floor(sec/60)+' min '+(sec%60)+' s':sec+' s'}
@@ -727,6 +742,7 @@ function renderImg(){
 
 $('imgGo').onclick=async()=>{
   if(!lastFiles)return;
+  if(refBusy){alert('Vänta tills sökningen efter vald bild är klar.');return}
   simToken++;imgAbort=false;imgState=null;$('imgRes').innerHTML='';$('imgStat').innerHTML='';
   $('imgGo').disabled=true;$('imgStop').hidden=false;
   try{await runImg()}catch(e){alert('Fel vid bildjämförelse: '+e.message)}
@@ -821,7 +837,7 @@ async function doRename(path,newName,quiet){
     if(r){r.path=newPath;r.name=newName;r.file=await e.handle.getFile();r.key=lastName+'/'+newPath+'|'+r.size+'|'+r.file.lastModified}
   }
   if(quiet)return newPath;
-  document.querySelectorAll('#imgRes button.num[data-path]').forEach(b=>{
+  document.querySelectorAll('#imgRes button.num[data-path],#refRes button.num[data-path]').forEach(b=>{
     if(b.dataset.path!==path)return;
     const meta=b.parentElement,bd=meta.querySelector('.badge');
     meta.innerHTML=markUp(newPath,newName,[]);if(bd)meta.appendChild(bd);
@@ -951,7 +967,7 @@ async function doDelete(path){
       imgState.exact=prune(imgState.exact);imgState.sim=prune(imgState.sim);
     }
   }
-  document.querySelectorAll('#imgRes .pic').forEach(p=>{
+  document.querySelectorAll('#imgRes .pic,#refRes .pic').forEach(p=>{
     const b=p.querySelector('button.num[data-path]');
     if(!b||b.dataset.path!==path)return;
     const grp=p.closest('.grp');p.remove();
@@ -1035,6 +1051,126 @@ $('bulkOk').onclick=async()=>{
   analyse();if(imgState)renderImg();
   updRenBar('Lade till ", '+tok+'" på '+done.length+' filer'+(bulkAbort?' (stoppad)':'')+(failed?' – '+failed+' hoppades över: '+firstErr:''));
 };
+
+/* ---------- Sök dubbletter till en vald bild ---------- */
+function refShow(txt,v,max){$('refProgWrap').hidden=false;$('refProg').max=max||1;$('refProg').value=v||0;$('refTxt').textContent=txt}
+async function refHashAll(){
+  const st=imgState;
+  if(st&&!st.partial&&st.recs.length&&st.HI&&!$('imgGo').disabled)return {recs:st.recs,HI:st.HI,LO:st.LO,ok:st.ok}; // återanvänd färdig sökning
+  const imgs=lastFiles.filter(f=>IMG_RE.test(f.name)&&($('sub').checked||!f.path.includes('/')));
+  const cache=(await kvGet('imgcache'))||{ph:{},sha:{}};
+  const recs=[];let last=0;
+  for(let i=0;i<imgs.length;i++){
+    const f=imgs[i];
+    try{const file=f.file||await f.handle.getFile();recs.push({path:f.path,name:f.name,size:file.size,file,key:lastName+'/'+f.path+'|'+file.size+'|'+file.lastModified})}catch(e){}
+    if(Date.now()-last>80){last=Date.now();refShow('Läser filinformation… '+i+' / '+imgs.length,i,imgs.length);await tick()}
+    if(refAbort)throw {aborted:true};
+  }
+  const n=recs.length,HI=new Uint32Array(n),LO=new Uint32Array(n),ok=new Uint8Array(n);
+  const t0=Date.now();let computed=0;last=0;
+  for(let i=0;i<n;i++){
+    const r=recs[i];let v=cache.ph[r.key];
+    if(!v){
+      try{v=await dhash(r.file);computed++}catch(e){v=[0,0,2]}
+      cache.ph[r.key]=v;
+      if(computed%400===0)await kvSet('imgcache',cache);
+    }
+    if(v[2]===0){HI[i]=v[0];LO[i]=v[1];ok[i]=1}
+    if(Date.now()-last>80){
+      last=Date.now();
+      const eta=computed>20?' · ca '+fmtTime((Date.now()-t0)/computed*(n-i)/1000)+' kvar':'';
+      refShow('Läser av bilder… '+i+' / '+n+eta,i,n);await tick();
+    }
+    if(refAbort){await kvSet('imgcache',cache);throw {aborted:true}}
+  }
+  await kvSet('imgcache',cache);
+  return {recs,HI,LO,ok};
+}
+async function runRef(file){
+  if(!lastFiles){alert('Välj en katalog först.');return}
+  if($('imgGo').disabled){alert('Vänta tills bildsökningen är klar.');return}
+  refBusy=true;refAbort=false;refState=null;
+  $('refPick').disabled=true;$('refStop').hidden=false;$('refRes').innerHTML='';
+  $('refName').textContent=file.name+' ('+fmtSize(file.size)+')';
+  try{
+    refShow('Läser av vald bild…',0,1);
+    const rh=await dhash(file).catch(()=>null),rsha=await sha256(file);
+    const H=await refHashAll();
+    const n=H.recs.length,dist=new Uint8Array(n),ident=new Uint8Array(n),self=new Uint8Array(n);
+    const refOk=!!rh&&rh[2]===0,cache=(await kvGet('imgcache'))||{ph:{},sha:{}};
+    for(let i=0;i<n;i++){
+      const r=H.recs[i];
+      if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;continue}
+      dist[i]=refOk&&H.ok[i]?Math.min(255,pc(rh[0]^H.HI[i])+pc(rh[1]^H.LO[i])):255;
+      if(r.size===file.size){
+        try{const sh=r.sha||cache.sha[r.key]||(cache.sha[r.key]=await sha256(r.file));if(sh===rsha)ident[i]=1}catch(e){}
+      }
+      if(refAbort)throw {aborted:true};
+    }
+    await kvSet('imgcache',cache);
+    refState={file,recs:H.recs,ok:H.ok,dist,ident,self,refOk};
+    renderRef();refShow('Klart.',1,1);
+  }catch(err){
+    if(err&&err.aborted)refShow('Avbrutet.',0,1);
+    else alert('Något gick fel: '+(err&&err.message||err));
+  }finally{refBusy=false;$('refPick').disabled=false;$('refStop').hidden=true}
+}
+function renderRef(){
+  const st=refState;if(!st)return;
+  const T=+$('tol1').value,el=$('refRes'),idx=[];
+  for(let i=0;i<st.recs.length;i++){
+    if(st.self[i])continue;
+    if(st.ident[i]||(st.refOk&&st.ok[i]&&st.dist[i]<=T))idx.push(i);
+  }
+  idx.sort((a,b)=>st.ident[b]-st.ident[a]||st.dist[a]-st.dist[b]||st.recs[a].path.localeCompare(st.recs[b].path,'sv',{numeric:true}));
+  const note=st.refOk?'':'<p class="small muted">Den valda bilden är nästan enfärgad eller kunde inte läsas av, så bara exakt likadana filer kan hittas.</p>';
+  if(!idx.length){el.innerHTML=note+'<span class="chip ok">Inga dubbletter hittades vid tolerans '+T+'</span>';return}
+  const refRec={file:st.file,path:st.file.name,name:st.file.name,size:st.file.size};
+  const list=[refRec].concat(idx.map(i=>st.recs[i]));
+  el.innerHTML=note+'<div class="grp"><h3>Träffar för vald bild · '+list.length+' filer</h3><div class="pics"></div></div>';
+  const pics=el.querySelector('.pics'),grp=el.querySelector('.grp');
+  const PAGE=40;let shown=0;
+  const more=document.createElement('button');more.style.marginTop='10px';
+  function card(k){
+    const r=list[k],p=document.createElement('div');p.className='pic';
+    let nm,badge;
+    if(k===0){nm=esc(r.name);badge='<span class="badge">vald bild</span>'}
+    else{
+      const i=idx[k-1];nm=markUp(r.path,r.name,[]);
+      badge=st.ident[i]?'<span class="badge">identisk</span>':'<span class="badge" title="Skillnad i fingeravtryck (0–64)">avstånd '+st.dist[i]+'</span>';
+    }
+    p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+nm+badge+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
+    const cv=p.querySelector('canvas');cv.title='Dubbelklicka för att visa större';
+    cv.ondblclick=()=>openViewer(list,k);
+    pics.appendChild(p);thumbQ=thumbQ.then(()=>drawThumb(r,p));
+  }
+  function add(){
+    const end=Math.min(shown+PAGE,list.length-1);
+    if(shown===0)card(0);
+    for(let k=shown+1;k<=end;k++)card(k);
+    shown=end;
+    more.hidden=shown>=list.length-1;
+    more.textContent='Visa fler ('+(list.length-1-shown)+' träffar kvar)';
+  }
+  more.onclick=add;grp.appendChild(more);add();
+}
+$('refPick').onclick=async()=>{
+  if(!lastFiles){alert('Välj en katalog först.');return}
+  if(window.showOpenFilePicker){
+    try{
+      const opts={multiple:false,types:[{description:'Bilder',accept:{'image/*':['.jpg','.jpeg','.png']}}]};
+      let h;
+      try{[h]=await showOpenFilePicker(dirHandle?Object.assign({startIn:dirHandle},opts):opts)}
+      catch(e){if(e.name==='AbortError')return;[h]=await showOpenFilePicker(opts)}
+      runRef(await h.getFile());
+    }catch(e){if(e.name!=='AbortError')alert('Kunde inte öppna filen: '+e.message)}
+  }else $('refFile').click();
+};
+$('refFile').onchange=e=>{const f=e.target.files[0];e.target.value='';if(f)runRef(f)};
+$('refStop').onclick=()=>{refAbort=true};
+$('tol1').oninput=()=>{$('tol1V').textContent=$('tol1').value};
+$('tol1').onchange=()=>renderRef();
+$('refRes').onclick=$('imgRes').onclick;
 
 /* ---------- Sök i filnamn ---------- */
 const fnSel=new Set(),FN_CAP=1000;let fnShown=[],fnTimer=null;
