@@ -193,7 +193,7 @@ dialog::backdrop{background:#0008}
 
 <div class="card" id="imgCard" hidden>
   <h2>Bilddubbletter</h2>
-  <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att jämföra ett litet visuellt fingeravtryck av varje bild. Inget laddas upp och inget ändras eller raderas.</p>
+  <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att jämföra två visuella fingeravtryck av varje bild, ett grovt och ett fint, och båda måste stämma. Inget laddas upp och inget ändras eller raderas.</p>
   <div class="refsec">
     <h3 style="margin:0 0 6px;font-size:1rem">Sök dubbletter till en vald bild</h3>
     <p class="muted small" style="margin:0 0 8px">Välj en bild (den kan ligga var som helst). Appen letar sedan efter exakta kopior och liknande bilder i den valda katalogen.</p>
@@ -212,6 +212,7 @@ dialog::backdrop{background:#0008}
     <button class="primary" id="imgGo">Sök bilddubbletter</button>
     <button id="imgStop" hidden>Avbryt</button>
     <label>Tolerans <input type="range" id="tol" min="0" max="14" value="5"> <b id="tolV">5</b></label>
+    <label title="Av: alla bilder i en grupp liknar gruppens första bild. På: bilder som liknar varandra steg för steg läggs i samma grupp."><input type="checkbox" id="chain"> Tillåt kedjor</label>
     <span class="muted small">Lägre = strängare (färre falska träffar), högre = lösare</span>
   </div>
   <div id="imgProgWrap" hidden style="margin-top:10px"><progress id="imgProg" max="1" value="0"></progress><div class="muted small" id="imgTxt"></div></div>
@@ -290,7 +291,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.24';
+const VERSION='1.25';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -585,22 +586,39 @@ async function sha256(file){
   return 'f'+h1.toString(16)+h2.toString(16)+'-'+u.length;
 }
 
-const hc=document.createElement('canvas');hc.width=72;hc.height=64;
+const hc=document.createElement('canvas');hc.width=136;hc.height=128;
 const hx=hc.getContext('2d',{willReadFrequently:true});
-async function dhash(file){ // 9x8 rutor -> 64 bitar (jämför intilliggande ljushet)
+const hc2=document.createElement('canvas');hc2.width=72;hc2.height=64;
+const hx2=hc2.getContext('2d',{willReadFrequently:true});
+const FP_LEN=11,FP_FAIL=[0,0,2,0,0,0,0,0,0,0,0];
+async function dhash(file){
+  // Returnerar [grov hi, grov lo, platt?, 8 ord fint]. Grovt = 64 bitar (9x8 rutor), fint = 256 bitar (17x16 rutor).
   let bmp;
-  try{bmp=await createImageBitmap(file,{resizeWidth:72,resizeHeight:64,resizeQuality:'medium'})}
+  try{bmp=await createImageBitmap(file,{resizeWidth:136,resizeHeight:128,resizeQuality:'medium'})}
   catch(e){bmp=await createImageBitmap(file)}
-  hx.fillStyle='#fff';hx.fillRect(0,0,72,64);hx.drawImage(bmp,0,0,72,64);if(bmp.close)bmp.close();
-  const d=hx.getImageData(0,0,72,64).data,a=new Float32Array(72);
-  for(let y=0;y<64;y++)for(let x=0;x<72;x++){const i=(y*72+x)*4;a[(y>>3)*9+(x>>3)]+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]}
+  hx.fillStyle='#fff';hx.fillRect(0,0,136,128);hx.drawImage(bmp,0,0,136,128);if(bmp.close)bmp.close();
+  const d=hx.getImageData(0,0,136,128).data,f=new Float32Array(17*16);
+  for(let y=0;y<128;y++)for(let x=0;x<136;x++){const i=(y*136+x)*4;f[(y>>3)*17+(x>>3)]+=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]}
+  for(let i=0;i<f.length;i++)f[i]/=64;
+  hx2.fillStyle='#fff';hx2.fillRect(0,0,72,64);hx2.drawImage(hc,0,0,136,128,0,0,72,64);
+  const d2=hx2.getImageData(0,0,72,64).data,a=new Float32Array(72);
+  for(let y=0;y<64;y++)for(let x=0;x<72;x++){const i=(y*72+x)*4;a[(y>>3)*9+(x>>3)]+=0.299*d2[i]+0.587*d2[i+1]+0.114*d2[i+2]}
   let mn=1e9,mx=-1;for(let i=0;i<72;i++){a[i]/=64;if(a[i]<mn)mn=a[i];if(a[i]>mx)mx=a[i]}
   let hi=0,lo=0;
   for(let y=0;y<8;y++)for(let x=0;x<8;x++){
     const bit=a[y*9+x]>a[y*9+x+1]?1:0,k=y*8+x;
     if(k<32)hi=((hi<<1)|bit)>>>0;else lo=((lo<<1)|bit)>>>0;
   }
-  return [hi,lo,(mx-mn)<6?1:0];
+  const w=new Array(8).fill(0);
+  for(let y=0;y<16;y++)for(let x=0;x<16;x++){const bit=f[y*17+x]>f[y*17+x+1]?1:0,k=y*16+x;w[k>>5]=((w[k>>5]<<1)|bit)>>>0}
+  return [hi,lo,(mx-mn)<6?1:0].concat(w);
+}
+// Två bilder är lika om BÅDE grovt och fint fingeravtryck stämmer: grovt högst T bitar, fint högst 4*T bitar (samma andel).
+function nearPair(HI,LO,FH,i,j,T){
+  if(pc(HI[i]^HI[j])+pc(LO[i]^LO[j])>T)return false;
+  let f=0;const lim=T*4,bi=i*8,bj=j*8;
+  for(let k=0;k<8;k++){f+=pc(FH[bi+k]^FH[bj+k]);if(f>lim)return false}
+  return true;
 }
 
 async function runImg(){
@@ -639,8 +657,8 @@ async function runImg(){
   const bySha=new Map();
   recs.forEach((r,i)=>{if(r.sha){let a=bySha.get(r.sha);if(!a)bySha.set(r.sha,a=[]);a.push(i)}});
   const exact=[...bySha.values()].filter(a=>a.length>1);
-  const HI=new Uint32Array(n),LO=new Uint32Array(n),ok=new Uint8Array(n);
-  imgState={recs,exact,sim:[],HI,LO,ok,errors:0,partial:false};
+  const HI=new Uint32Array(n),LO=new Uint32Array(n),FH=new Uint32Array(n*8),ok=new Uint8Array(n);
+  imgState={recs,exact,sim:[],HI,LO,FH,ok,errors:0,partial:false};
   renderImg();
   await kvSet('imgcache',cache);
 
@@ -648,12 +666,12 @@ async function runImg(){
   const t0=Date.now();let computed=0;
   for(let i=0;i<n;i++){
     const r=recs[i];let v=cache.ph[r.key];
-    if(!v){
-      try{v=await dhash(r.file);computed++}catch(e){v=[0,0,2];imgState.errors++}
+    if(!v||v.length<FP_LEN){
+      try{v=await dhash(r.file);computed++}catch(e){v=FP_FAIL;imgState.errors++}
       cache.ph[r.key]=v;
       if(computed%400===0)await kvSet('imgcache',cache);
     }
-    if(v[2]===0){HI[i]=v[0];LO[i]=v[1];ok[i]=1}
+    if(v[2]===0){HI[i]=v[0];LO[i]=v[1];FH.set(v.slice(3,11),i*8);ok[i]=1}
     const eta=computed>20?' · ca '+fmtTime((Date.now()-t0)/computed*(n-i)/1000)+' kvar':'';
     await ui('Läser av bilder… '+i+' / '+n+eta,i,n);
     if(imgAbort){aborted=true;break}
@@ -667,21 +685,30 @@ async function runImg(){
 
 async function groupSimilar(){
   const st=imgState;if(!st)return;
-  const token=++simToken,{recs,HI,LO,ok}=st,n=recs.length,T=+$('tol').value;
-  const par=new Int32Array(n);for(let i=0;i<n;i++)par[i]=i;
-  const find=x=>{while(par[x]!==x){par[x]=par[par[x]];x=par[x]}return x};
-  for(let i=0;i<n;i++){
-    if(ok[i]){
-      const hi=HI[i],lo=LO[i];
-      for(let j=i+1;j<n;j++){
-        if(ok[j]&&pc(hi^HI[j])+pc(lo^LO[j])<=T){const a=find(i),b=find(j);if(a!==b)par[a]=b}
-      }
+  const token=++simToken,{recs,HI,LO,FH,ok}=st,n=recs.length,T=+$('tol').value,chain=$('chain').checked;
+  let groups=[];
+  if(chain){ // kedjor: A~B och B~C ger gruppen A,B,C
+    const par=new Int32Array(n);for(let i=0;i<n;i++)par[i]=i;
+    const find=x=>{while(par[x]!==x){par[x]=par[par[x]];x=par[x]}return x};
+    for(let i=0;i<n;i++){
+      if(ok[i]){for(let j=i+1;j<n;j++){if(ok[j]&&nearPair(HI,LO,FH,i,j,T)){const a=find(i),b=find(j);if(a!==b)par[a]=b}}}
+      if(i%120===0){prog('Jämför bilder… '+i+' / '+n,i,n);await tick();if(token!==simToken)return}
     }
-    if(i%120===0){prog('Jämför bilder… '+i+' / '+n,i,n);await tick();if(token!==simToken)return}
+    const m=new Map();
+    for(let i=0;i<n;i++){if(!ok[i])continue;const r=find(i);let a=m.get(r);if(!a)m.set(r,a=[]);a.push(i)}
+    groups=[...m.values()];
+  }else{ // strikt: alla i gruppen liknar gruppens första bild
+    const taken=new Uint8Array(n);
+    for(let i=0;i<n;i++){
+      if(ok[i]&&!taken[i]){
+        const g=[i];taken[i]=1;
+        for(let j=i+1;j<n;j++){if(ok[j]&&!taken[j]&&nearPair(HI,LO,FH,i,j,T)){g.push(j);taken[j]=1}}
+        groups.push(g);
+      }
+      if(i%120===0){prog('Jämför bilder… '+i+' / '+n,i,n);await tick();if(token!==simToken)return}
+    }
   }
-  const m=new Map();
-  for(let i=0;i<n;i++){if(!ok[i])continue;const r=find(i);let a=m.get(r);if(!a)m.set(r,a=[]);a.push(i)}
-  st.sim=[...m.values()].filter(g=>g.length>1)
+  st.sim=groups.filter(g=>g.length>1)
     .filter(g=>!g.every(i=>recs[i].sha&&recs[i].sha===recs[g[0]].sha)); // rena identiska grupper visas redan ovan
   prog('Klart.',1,1);
   renderImg();
@@ -751,6 +778,7 @@ $('imgGo').onclick=async()=>{
 $('imgStop').onclick=()=>{imgAbort=true};
 $('tol').oninput=()=>{$('tolV').textContent=$('tol').value};
 $('tol').onchange=()=>{if(imgState&&!$('imgGo').disabled)groupSimilar()};
+$('chain').onchange=()=>{if(imgState&&!$('imgGo').disabled)groupSimilar()};
 $('imgRes').onclick=e=>{
   const b=e.target.closest('button.num');if(!b)return;
   const old=b.textContent;
@@ -1056,7 +1084,7 @@ $('bulkOk').onclick=async()=>{
 function refShow(txt,v,max){$('refProgWrap').hidden=false;$('refProg').max=max||1;$('refProg').value=v||0;$('refTxt').textContent=txt}
 async function refHashAll(){
   const st=imgState;
-  if(st&&!st.partial&&st.recs.length&&st.HI&&!$('imgGo').disabled)return {recs:st.recs,HI:st.HI,LO:st.LO,ok:st.ok}; // återanvänd färdig sökning
+  if(st&&!st.partial&&st.recs.length&&st.FH&&!$('imgGo').disabled)return {recs:st.recs,HI:st.HI,LO:st.LO,FH:st.FH,ok:st.ok}; // återanvänd färdig sökning
   const imgs=lastFiles.filter(f=>IMG_RE.test(f.name)&&($('sub').checked||!f.path.includes('/')));
   const cache=(await kvGet('imgcache'))||{ph:{},sha:{}};
   const recs=[];let last=0;
@@ -1066,16 +1094,16 @@ async function refHashAll(){
     if(Date.now()-last>80){last=Date.now();refShow('Läser filinformation… '+i+' / '+imgs.length,i,imgs.length);await tick()}
     if(refAbort)throw {aborted:true};
   }
-  const n=recs.length,HI=new Uint32Array(n),LO=new Uint32Array(n),ok=new Uint8Array(n);
+  const n=recs.length,HI=new Uint32Array(n),LO=new Uint32Array(n),FH=new Uint32Array(n*8),ok=new Uint8Array(n);
   const t0=Date.now();let computed=0;last=0;
   for(let i=0;i<n;i++){
     const r=recs[i];let v=cache.ph[r.key];
-    if(!v){
-      try{v=await dhash(r.file);computed++}catch(e){v=[0,0,2]}
+    if(!v||v.length<FP_LEN){
+      try{v=await dhash(r.file);computed++}catch(e){v=FP_FAIL}
       cache.ph[r.key]=v;
       if(computed%400===0)await kvSet('imgcache',cache);
     }
-    if(v[2]===0){HI[i]=v[0];LO[i]=v[1];ok[i]=1}
+    if(v[2]===0){HI[i]=v[0];LO[i]=v[1];FH.set(v.slice(3,11),i*8);ok[i]=1}
     if(Date.now()-last>80){
       last=Date.now();
       const eta=computed>20?' · ca '+fmtTime((Date.now()-t0)/computed*(n-i)/1000)+' kvar':'';
@@ -1084,7 +1112,7 @@ async function refHashAll(){
     if(refAbort){await kvSet('imgcache',cache);throw {aborted:true}}
   }
   await kvSet('imgcache',cache);
-  return {recs,HI,LO,ok};
+  return {recs,HI,LO,FH,ok};
 }
 async function runRef(file){
   if(!lastFiles){alert('Välj en katalog först.');return}
@@ -1096,19 +1124,23 @@ async function runRef(file){
     refShow('Läser av vald bild…',0,1);
     const rh=await dhash(file).catch(()=>null),rsha=await sha256(file);
     const H=await refHashAll();
-    const n=H.recs.length,dist=new Uint8Array(n),ident=new Uint8Array(n),self=new Uint8Array(n);
-    const refOk=!!rh&&rh[2]===0,cache=(await kvGet('imgcache'))||{ph:{},sha:{}};
+    const n=H.recs.length,dist=new Uint8Array(n),fdist=new Uint16Array(n),ident=new Uint8Array(n),self=new Uint8Array(n);
+    const refOk=!!rh&&rh.length>=FP_LEN&&rh[2]===0,cache=(await kvGet('imgcache'))||{ph:{},sha:{}};
     for(let i=0;i<n;i++){
       const r=H.recs[i];
       if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;continue}
-      dist[i]=refOk&&H.ok[i]?Math.min(255,pc(rh[0]^H.HI[i])+pc(rh[1]^H.LO[i])):255;
+      if(refOk&&H.ok[i]){
+        dist[i]=Math.min(255,pc(rh[0]^H.HI[i])+pc(rh[1]^H.LO[i]));
+        let fd=0;for(let k=0;k<8;k++)fd+=pc(rh[3+k]^H.FH[i*8+k]);
+        fdist[i]=fd;
+      }else{dist[i]=255;fdist[i]=1000}
       if(r.size===file.size){
         try{const sh=r.sha||cache.sha[r.key]||(cache.sha[r.key]=await sha256(r.file));if(sh===rsha)ident[i]=1}catch(e){}
       }
       if(refAbort)throw {aborted:true};
     }
     await kvSet('imgcache',cache);
-    refState={file,recs:H.recs,ok:H.ok,dist,ident,self,refOk};
+    refState={file,recs:H.recs,ok:H.ok,dist,fdist,ident,self,refOk};
     renderRef();refShow('Klart.',1,1);
   }catch(err){
     if(err&&err.aborted)refShow('Avbrutet.',0,1);
@@ -1120,9 +1152,9 @@ function renderRef(){
   const T=+$('tol1').value,el=$('refRes'),idx=[];
   for(let i=0;i<st.recs.length;i++){
     if(st.self[i])continue;
-    if(st.ident[i]||(st.refOk&&st.ok[i]&&st.dist[i]<=T))idx.push(i);
+    if(st.ident[i]||(st.refOk&&st.ok[i]&&st.dist[i]<=T&&st.fdist[i]<=T*4))idx.push(i);
   }
-  idx.sort((a,b)=>st.ident[b]-st.ident[a]||st.dist[a]-st.dist[b]||st.recs[a].path.localeCompare(st.recs[b].path,'sv',{numeric:true}));
+  idx.sort((a,b)=>st.ident[b]-st.ident[a]||(st.dist[a]*4+st.fdist[a])-(st.dist[b]*4+st.fdist[b])||st.recs[a].path.localeCompare(st.recs[b].path,'sv',{numeric:true}));
   const note=st.refOk?'':'<p class="small muted">Den valda bilden är nästan enfärgad eller kunde inte läsas av, så bara exakt likadana filer kan hittas.</p>';
   if(!idx.length){el.innerHTML=note+'<span class="chip ok">Inga dubbletter hittades vid tolerans '+T+'</span>';return}
   const refRec={file:st.file,path:st.file.name,name:st.file.name,size:st.file.size};
@@ -1137,7 +1169,7 @@ function renderRef(){
     if(k===0){nm=esc(r.name);badge='<span class="badge">vald bild</span>'}
     else{
       const i=idx[k-1];nm=markUp(r.path,r.name,[]);
-      badge=st.ident[i]?'<span class="badge">identisk</span>':'<span class="badge" title="Skillnad i fingeravtryck (0–64)">avstånd '+st.dist[i]+'</span>';
+      badge=st.ident[i]?'<span class="badge">identisk</span>':'<span class="badge" title="Skillnad i grovt (0–64) och fint (0–256) fingeravtryck. Båda måste ligga inom toleransen.">avstånd '+st.dist[i]+' · fin '+st.fdist[i]+'</span>';
     }
     p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+nm+badge+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
     const cv=p.querySelector('canvas');cv.title='Dubbelklicka för att visa större';
