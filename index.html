@@ -71,6 +71,8 @@ button.num.done{background:var(--okbg);color:var(--ok)}
 .pic{width:190px;font-size:.8rem;word-break:break-all}
 .pic canvas{display:block;width:190px;height:140px;background:var(--bg);border-radius:6px;border:1px solid var(--line)}
 .pic .meta{margin-top:4px}
+.refact{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.refact button.edit{margin:0;font-size:.78rem}
 .pic .dim{color:var(--muted)}
 .badge{display:inline-block;background:var(--okbg);color:var(--ok);border-radius:6px;padding:0 6px;font-size:.75rem;margin-left:4px}
 progress{width:100%;height:10px}
@@ -295,7 +297,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.29';
+const VERSION='1.30';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -937,9 +939,14 @@ async function doRename(path,newName,quiet){
   const newPath=segs.concat(newName).join('/');
   e.name=newName;e.path=newPath;
   // bildregister, öppen visare och listor
-  if(imgState){
-    const r=imgState.recs.find(x=>x.path===path);
+  const recSets=[];if(imgState)recSets.push(imgState.recs);if(refState&&(!imgState||refState.recs!==imgState.recs))recSets.push(refState.recs);
+  for(const rs of recSets){
+    const r=rs.find(x=>x.path===path);
     if(r){r.path=newPath;r.name=newName;r.file=await e.handle.getFile();r.key=lastName+'/'+newPath+'|'+r.size+'|'+r.file.lastModified}
+  }
+  if(refState&&refState.refPath===path){
+    refState.refPath=newPath;refState.file=await e.handle.getFile();
+    $('refName').textContent=newName+' ('+fmtSize(refState.file.size)+')';
   }
   if(quiet)return newPath;
   document.querySelectorAll('#imgRes button.num[data-path],#refRes button.num[data-path]').forEach(b=>{
@@ -947,6 +954,7 @@ async function doRename(path,newName,quiet){
     const meta=b.parentElement,bd=meta.querySelector('.badge');
     meta.innerHTML=markUp(newPath,newName,[]);if(bd)meta.appendChild(bd);
   });
+  document.querySelectorAll('#refRes button[data-act]').forEach(b=>{if(b.dataset.path===path)b.dataset.path=newPath});
   if($('viewer').open&&vList.some(r=>r.path===newPath))showV();
   keepScroll(analyse);
   return newPath;
@@ -1071,6 +1079,10 @@ async function doDelete(path){
       const prune=gs=>gs.map(g=>g.filter(i=>i!==ri)).filter(g=>g.length>1);
       imgState.exact=prune(imgState.exact);imgState.sim=prune(imgState.sim);
     }
+  }
+  if(refState&&refState.refPath===path){
+    refState=null;$('refName').textContent='';
+    $('refRes').innerHTML='<span class="muted small">Den valda bilden flyttades till _Raderade.</span>';
   }
   document.querySelectorAll('#imgRes .pic,#refRes .pic').forEach(p=>{
     const b=p.querySelector('button.num[data-path]');
@@ -1381,7 +1393,7 @@ async function refHashAll(){
 async function runRefFast(file){
   if(!lastFiles){alert('Välj en katalog först.');return}
   if($('imgGo').disabled){alert('Vänta tills bildsökningen är klar.');return}
-  refBusy=true;refAbort=false;refState=null;
+  refBusy=true;refAbort=false;refState=null;let refPath=null;
   $('refPick').disabled=true;$('refStop').hidden=false;$('refRes').innerHTML='';
   $('refName').textContent=file.name+' ('+fmtSize(file.size)+')';
   try{
@@ -1392,7 +1404,7 @@ async function runRefFast(file){
     const refOk=!!rh&&rh.length===FP_LEN&&rh[0]===0,cache=(await kvGet('imgcache'))||{ph:{},sha:{}};
     for(let i=0;i<n;i++){
       const r=H.recs[i];
-      if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;continue}
+      if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;if(!r.deleted)refPath=r.path;continue}
       if(refOk&&H.ok[i]){
         ldist[i]=layoutDist(H.LAY,i,0,rh.subarray(1));
       }else ldist[i]=99;
@@ -1402,7 +1414,7 @@ async function runRefFast(file){
       if(refAbort)throw {aborted:true};
     }
     await kvSet('imgcache',cache);
-    refState={mode:'fast',file,recs:H.recs,ok:H.ok,ldist,ident,self,refOk};
+    refState={mode:'fast',file,refPath,recs:H.recs,ok:H.ok,ldist,ident,self,refOk};
     renderRef();refShow('Klart.',1,1);
   }catch(err){
     if(err&&err.aborted)refShow('Avbrutet.',0,1);
@@ -1419,22 +1431,23 @@ function renderRef(){
   }
   idx.sort((a,b)=>st.ident[b]-st.ident[a]||(st.mode==='detail'?st.inl[b]-st.inl[a]:st.ldist[a]-st.ldist[b])||st.recs[a].path.localeCompare(st.recs[b].path,'sv',{numeric:true}));
   const note=(st.mode==='detail'||st.refOk)?'':'<p class="small muted">Den valda bilden är nästan enfärgad eller kunde inte läsas av, så bara exakt likadana filer kan hittas.</p>';
-  if(!idx.length){el.innerHTML=note+'<span class="chip ok">Inga dubbletter hittades vid tolerans '+T+(st.mode==='detail'?' (minst '+minInl(T)+' gemensamma detaljer)':'')+'</span>';return}
-  const refRec={file:st.file,path:st.file.name,name:st.file.name,size:st.file.size};
+  const none=!idx.length,noneMsg='<span class="chip ok">Inga dubbletter hittades vid tolerans '+T+(st.mode==='detail'?' (minst '+minInl(T)+' gemensamma detaljer)':'')+'</span>';
+  const refP=st.refPath||st.file.name,refRec={file:st.file,path:refP,name:refP.split('/').pop(),size:st.file.size};
   const list=[refRec].concat(idx.map(i=>st.recs[i]));
-  el.innerHTML=note+'<div class="grp"><h3>Träffar för vald bild · '+list.length+' filer</h3><div class="pics"></div></div>';
+  el.innerHTML=note+(none?noneMsg:'')+'<div class="grp"><h3>'+(none?'Vald bild':'Träffar för vald bild')+' · '+list.length+' filer</h3><div class="pics"></div></div>';
   const pics=el.querySelector('.pics'),grp=el.querySelector('.grp');
   const PAGE=40;let shown=0;
   const more=document.createElement('button');more.style.marginTop='10px';
   function card(k){
     const r=list[k],p=document.createElement('div');p.className='pic';
     let nm,badge;
-    if(k===0){nm=esc(r.name);badge='<span class="badge">vald bild</span>'}
+    if(k===0){nm=st.refPath?markUp(refRec.path,refRec.name,[]):esc(r.name);badge='<span class="badge">vald bild</span>'}
     else{
       const i=idx[k-1];nm=markUp(r.path,r.name,[]);
       badge=st.ident[i]?'<span class="badge">identisk</span>':(st.mode==='detail'?'<span class="badge" title="Antal detaljer i bilderna som sitter på samma plats i förhållande till varandra (efter skala och förskjutning)">'+st.inl[i]+' detaljer</span>':'<span class="badge" title="Avstånd mellan bilderna (0 = lika). Toleransen anger högsta tillåtna avstånd.">avstånd '+st.ldist[i].toFixed(2).replace('.',',')+'</span>');
     }
-    p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+nm+badge+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>';
+    p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+nm+badge+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>'
+      +(k===0?(st.refPath?'<div class="refact"><button class="edit" data-act="ren" data-path="'+escA(st.refPath)+'">✎ Byt namn</button><button class="edit" data-act="del" data-path="'+escA(st.refPath)+'">Flytta till _Raderade</button></div>':'<div class="dim meta">Ligger utanför vald katalog, kan inte döpas om eller flyttas härifrån.</div>'):'');
     const cv=p.querySelector('canvas');cv.title='Dubbelklicka för att visa större';
     cv.ondblclick=()=>openViewer(list,k);
     pics.appendChild(p);lazyThumb(r,p);
@@ -1483,7 +1496,7 @@ async function refBuildRecs(){
 async function runRefDetail(file){
   if(!lastFiles){alert('Välj en katalog först.');return}
   if($('imgGo').disabled){alert('Vänta tills bildsökningen är klar.');return}
-  refBusy=true;refAbort=false;refState=null;
+  refBusy=true;refAbort=false;refState=null;let refPath=null;
   $('refPick').disabled=true;$('refStop').hidden=false;$('refRes').innerHTML='';
   $('refName').textContent=file.name+' ('+fmtSize(file.size)+')';
   try{
@@ -1497,7 +1510,7 @@ async function runRefDetail(file){
     let last=0;
     for(let i=0;i<n;i++){
       const r=recs[i];
-      if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;continue}
+      if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;if(!r.deleted)refPath=r.path;continue}
       const f=A.FTS[i];if(f)inl[i]=ftMatch(R.ft,f,f.w,f.h);
       gd[i]=(!refFlat&&A.ok[i])?layoutDist(A.LAY,i,0,rv):0;
       if(r.size===file.size){
@@ -1507,7 +1520,7 @@ async function runRefDetail(file){
       if(refAbort)throw {aborted:true};
     }
     await kvSet('imgcache',cache);
-    refState={mode:'detail',file,recs,inl,gd,ident,self};
+    refState={mode:'detail',file,refPath,recs,inl,gd,ident,self};
     renderRef();refShow('Klart.',1,1);
   }catch(err){
     if(err&&err.aborted)refShow('Avbrutet. Det som hunnit läsas är sparat till nästa gång.',0,1);
@@ -1515,7 +1528,11 @@ async function runRefDetail(file){
   }finally{refBusy=false;$('refPick').disabled=false;$('refStop').hidden=true}
 }
 $('tol1').onchange=()=>renderRef();
-$('refRes').onclick=$('imgRes').onclick;
+$('refRes').onclick=e=>{
+  const a=e.target.closest('button[data-act]');
+  if(a){if(a.dataset.act==='ren')startRename(a.dataset.path);else startDelete(a.dataset.path);return}
+  $('imgRes').onclick(e);
+};
 
 /* ---------- Sök i filnamn ---------- */
 const fnSel=new Set(),FN_CAP=1000;let fnShown=[],fnTimer=null;
