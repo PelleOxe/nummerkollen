@@ -9,17 +9,18 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%232563eb'/%3E%3Ctext x='50' y='68' font-size='56' font-family='Arial' font-weight='bold' text-anchor='middle' fill='white'%3E1,2%3C/text%3E%3C/svg%3E">
 <style>
 :root{--bg:#f4f6fa;--card:#fff;--text:#1b2230;--muted:#667085;--line:#dde3ee;--accent:#2563eb;--warn:#c2410c;--warnbg:#fff1e6;--okbg:#e8f5ec;--ok:#1a7f37}
+:root[data-theme="dusk"]{--bg:#2b3450;--card:rgba(255,255,255,.07);--btn:rgba(255,255,255,.10);--dlg:#323c5c;--text:#eef2fb;--muted:#bcc7de;--line:rgba(190,205,240,.24);--accent:#9dbbff;--warn:#ffd0a4;--warnbg:rgba(255,176,110,.17);--okbg:rgba(120,225,160,.15);--ok:#a4f0bf;--bgimg:linear-gradient(155deg,#2c3656 0%,#304062 48%,#2b4452 100%);--cardimg:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.015))}
 :root[data-theme="dark"]{--bg:#12151c;--card:#1b2029;--text:#e7ebf3;--muted:#9aa4b5;--line:#2c3442;--accent:#5b8def;--warn:#ffb072;--warnbg:#3a2616;--okbg:#14301e;--ok:#5fd07f}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+body{margin:0;background:var(--bg);background-image:var(--bgimg,none);background-attachment:fixed;color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:1200px;margin:0 auto;padding:16px}
 header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
 h1{font-size:1.5rem;margin:0}
 .ver{color:var(--muted);font-size:.8rem;font-weight:400;margin-left:6px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:14px}
-button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--card);color:var(--text);padding:9px 14px;border-radius:9px}
+.card{background:var(--card);background-image:var(--cardimg,none);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:14px}
+button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--btn,var(--card));color:var(--text);padding:9px 14px;border-radius:9px}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 button{box-shadow:0 3px 0 var(--line);transition:transform .08s,box-shadow .08s,filter .1s;position:relative}
 button.primary{box-shadow:0 3px 0 rgba(0,0,0,.35)}
@@ -34,6 +35,7 @@ label{display:flex;gap:6px;align-items:center}
 #pfxOther:disabled{opacity:.5}
 #fnQ{flex:1;min-width:220px;font:inherit;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text)}
 #fnList{max-height:520px;overflow:auto;margin-top:8px}
+#skipList{max-height:380px;overflow:auto}
 .fnrow{display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-top:1px solid var(--line);font-size:.9rem}
 .fnrow:first-child{border-top:0}
 .fnrow input[type=checkbox]{margin-top:5px}
@@ -104,7 +106,7 @@ mark{background:var(--okbg);color:var(--ok);border-radius:3px;padding:0 2px}
 .dup div{color:var(--muted);font-size:.88rem;word-break:break-all}
 .muted{color:var(--muted)}
 footer{text-align:center;color:var(--muted);font-size:.85rem;padding:24px 0 8px}
-dialog{border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--text);max-width:340px;text-align:center}
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--dlg,var(--card));background-image:var(--cardimg,none);color:var(--text);max-width:340px;text-align:center}
 dialog::backdrop{background:#0008}
 #qr{width:240px;height:240px;image-rendering:pixelated;background:#fff;padding:8px;border-radius:8px}
 .small{font-size:.85rem;word-break:break-all}
@@ -167,6 +169,11 @@ dialog::backdrop{background:#0008}
     <p class="muted small" id="rangeTxt" style="margin:6px 0"></p>
     <p class="muted small" style="margin:0 0 8px">Klicka på ett nummer för att kopiera det (vid en följd kopieras det lägsta).</p>
     <div class="chips" id="miss"></div>
+  </div>
+  <div class="card" id="skipCard" hidden>
+    <h2>Tal i det undvikna intervallet <span class="muted" id="skipN"></span></h2>
+    <p class="muted small" style="margin:6px 0 8px">Filer vars nummer ligger i intervallet du angett under "Undvik tal i intervallet". Byt nummer med ✎ eller högerklick på numret, eller flytta filen till _Raderade med 🗑.</p>
+    <div id="skipList"></div>
   </div>
  </div>
  <div class="col">
@@ -297,7 +304,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.30';
+const VERSION='1.31';
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -312,10 +319,15 @@ document.head.appendChild(ml);
 if('serviceWorker' in navigator&&/^https?:/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
 
 /* ---------- Tema ---------- */
-function setTheme(t){document.documentElement.dataset.theme=t;try{localStorage.setItem('nk-theme',t)}catch(e){}}
+const THEMES=[['light','Ljust'],['dark','Mörkt'],['dusk','Skymning']];
+function setTheme(t){
+  if(!THEMES.some(x=>x[0]===t))t='light';
+  document.documentElement.dataset.theme=t;try{localStorage.setItem('nk-theme',t)}catch(e){}
+  const nm=THEMES.find(x=>x[0]===t)[1];$('theme').textContent='🌓 '+nm;$('theme').title='Byt tema (nu: '+nm+')';
+}
 let saved=null;try{saved=localStorage.getItem('nk-theme')}catch(e){}
 setTheme(saved||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
-$('theme').onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
+$('theme').onclick=()=>{const i=THEMES.findIndex(x=>x[0]===document.documentElement.dataset.theme);setTheme(THEMES[(i+1)%THEMES.length][0])};
 
 /* ---------- Analys ---------- */
 let FILE_RE=/^\s*(\d+)\s*,.*\.(jpe?g|png)$/i,NUM_RE=/^(\s*)(\d+)/,curPrefix='';
@@ -546,6 +558,15 @@ function analyse(){
   }else $('rangeTxt').textContent='Inga matchande filer hittades.';
   $('miss').innerHTML=missing.length?ranges(missing).map(r=>`<button class="chip" data-n="${parseInt(r,10)}" title="Kopiera ${parseInt(r,10)}">${r}</button>`).join(''):(nums.length?'<span class="chip ok">Inga nummer saknas</span>':'');
   missText=missing.join('\n');
+  // filer som har nummer i det undvikna intervallet
+  const sk2=parseSkip($('skipIn').value);
+  if(sk2.ranges.length){
+    const inS=n=>sk2.ranges.some(r=>n>=r[0]&&n<=r[1]),rows=[];
+    nums.filter(inS).forEach(n=>map.get(n).forEach(pp=>rows.push(pp)));
+    $('skipCard').hidden=false;$('skipN').textContent='('+rows.length+')';
+    $('skipList').innerHTML=rows.length?rows.map(pp=>`<div class="fnrow">${dirHandle?`<button class="edit" data-act="ren" data-path="${escA(pp)}" title="Byt namn">✎</button><button class="edit" data-act="del" data-path="${escA(pp)}" title="Flytta till _Raderade">🗑</button>`:''}<span>${markUp(pp,pp.split('/').pop(),[])}</span></div>`).join(''):'<span class="chip ok">Inga filer har nummer i intervallet</span>';
+    if(!sk2.bad.length&&rows.length)$('skipInfo').textContent=rows.length+' filer har nummer i intervallet – se listan under Saknade nummer.';
+  }else $('skipCard').hidden=true;
 }
 function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function escA(s){return esc(s).replace(/"/g,'&quot;')}
@@ -908,7 +929,7 @@ function renImgLoad(handle){
     const im=$('renImg');im.onload=()=>{im.hidden=false};im.onerror=()=>{im.hidden=true};im.src=renUrl;
   }).catch(()=>{});
 }
-function keepScroll(fn){const a=$('yearList').scrollTop,b=$('ign').scrollTop,c=$('fnList').scrollTop;fn();$('yearList').scrollTop=a;$('ign').scrollTop=b;$('fnList').scrollTop=c}
+function keepScroll(fn){const a=$('yearList').scrollTop,b=$('ign').scrollTop,c=$('fnList').scrollTop,d2=$('skipList').scrollTop;fn();$('yearList').scrollTop=a;$('ign').scrollTop=b;$('fnList').scrollTop=c;$('skipList').scrollTop=d2}
 async function doRename(path,newName,quiet){
   const e=lastFiles&&lastFiles.find(f=>f.path===path);
   if(!e||!e.handle||!dirHandle)throw new Error('Namnbyte kräver Chrome/Edge och att katalogen valts med "Välj katalog…".');
@@ -1533,6 +1554,14 @@ $('refRes').onclick=e=>{
   if(a){if(a.dataset.act==='ren')startRename(a.dataset.path);else startDelete(a.dataset.path);return}
   $('imgRes').onclick(e);
 };
+
+$('skipList').addEventListener('click',e=>{
+  const a=e.target.closest('button[data-act]');
+  if(a){if(a.dataset.act==='ren')startRename(a.dataset.path);else startDelete(a.dataset.path);return}
+  const b=e.target.closest('button.num');if(!b)return;
+  const old=b.textContent;
+  navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
+});
 
 /* ---------- Sök i filnamn ---------- */
 const fnSel=new Set(),FN_CAP=1000;let fnShown=[],fnTimer=null;
