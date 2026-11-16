@@ -9,7 +9,7 @@
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%232563eb'/%3E%3Ctext x='50' y='68' font-size='56' font-family='Arial' font-weight='bold' text-anchor='middle' fill='white'%3E1,2%3C/text%3E%3C/svg%3E">
 <style>
 :root{--bg:#f4f6fa;--card:#fff;--text:#1b2230;--muted:#667085;--line:#dde3ee;--accent:#2563eb;--warn:#c2410c;--warnbg:#fff1e6;--okbg:#e8f5ec;--ok:#1a7f37}
-:root[data-theme="dusk"]{--bg:#2b3450;--card:rgba(255,255,255,.07);--btn:rgba(255,255,255,.10);--dlg:#323c5c;--text:#eef2fb;--muted:#bcc7de;--line:rgba(190,205,240,.24);--accent:#9dbbff;--warn:#ffd0a4;--warnbg:rgba(255,176,110,.17);--okbg:rgba(120,225,160,.15);--ok:#a4f0bf;--bgimg:linear-gradient(155deg,#2c3656 0%,#304062 48%,#2b4452 100%);--cardimg:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,.015))}
+:root[data-theme="night"]{--bg:#0a1020;--card:rgba(14,24,50,.78);--btn:rgba(46,70,130,.40);--dlg:#0d1630;--text:#e8edf8;--muted:#9fb0d0;--line:rgba(110,140,210,.26);--accent:#6f9bff;--warn:#ffb98a;--warnbg:rgba(255,160,90,.14);--okbg:rgba(90,210,140,.14);--ok:#7fe0a3;--bgimg:linear-gradient(165deg,#03050a 0%,#070e1d 38%,#0b1c40 100%);--cardimg:linear-gradient(180deg,rgba(70,110,210,.10),rgba(20,40,90,.03))}
 :root[data-theme="dark"]{--bg:#12151c;--card:#1b2029;--text:#e7ebf3;--muted:#9aa4b5;--line:#2c3442;--accent:#5b8def;--warn:#ffb072;--warnbg:#3a2616;--okbg:#14301e;--ok:#5fd07f}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -106,6 +106,7 @@ mark{background:var(--okbg);color:var(--ok);border-radius:3px;padding:0 2px}
 .dup div{color:var(--muted);font-size:.88rem;word-break:break-all}
 .muted{color:var(--muted)}
 footer{text-align:center;color:var(--muted);font-size:.85rem;padding:24px 0 8px}
+#aboutDlg{max-width:none;width:min(480px,94vw);text-align:left}
 dialog{border:1px solid var(--line);border-radius:14px;background:var(--dlg,var(--card));background-image:var(--cardimg,none);color:var(--text);max-width:340px;text-align:center}
 dialog::backdrop{background:#0008}
 #qr{width:240px;height:240px;image-rendering:pixelated;background:#fff;padding:8px;border-radius:8px}
@@ -117,6 +118,7 @@ dialog::backdrop{background:#0008}
 <header>
   <h1>Nummerkollen<span class="ver" id="ver"></span></h1>
   <div class="row">
+    <button id="aboutBtn">Om</button>
     <button id="share">Dela app</button>
     <button id="theme" aria-label="Växla tema">🌓</button>
   </div>
@@ -296,6 +298,15 @@ dialog::backdrop{background:#0008}
   <div class="vfoot muted small" id="vInfo"></div>
 </dialog>
 
+<dialog id="aboutDlg">
+  <h2>Om Nummerkollen</h2>
+  <p class="small" style="margin:0 0 10px">Nummerkollen är ett supportprogram till Bildvis. Välj en katalog med bilder (jpg/png) vars filnamn börjar med ett nummer, så visar appen dubbletter och saknade nummer, kontrollerar årtal i filnamnen och hittar bilddubbletter. Du kan byta namn på filer och flytta dem till mappen _Raderade. Inget laddas upp, allt sker i webbläsaren.</p>
+  <p class="muted small" style="margin:0 0 12px">Version <b id="aboutVer"></b> · © <span id="aboutYr"></span> Per Andersson</p>
+  <div class="row"><button class="primary" id="updBtn">Sök uppdatering</button><button id="updGo" hidden>Uppdatera nu</button></div>
+  <p class="small" id="updMsg" style="min-height:1.4em;margin:10px 0"></p>
+  <button id="aboutClose">Stäng</button>
+</dialog>
+
 <dialog id="dlg">
   <h2>Dela app</h2>
   <canvas id="qr" width="240" height="240"></canvas>
@@ -304,9 +315,9 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const VERSION='1.31';
+const APP_VERSION = "1.32";
 const $=id=>document.getElementById(id);
-$('ver').textContent='v'+VERSION;
+$('ver').textContent='v'+APP_VERSION;
 $('yr').textContent=new Date().getFullYear();
 
 /* ---------- PWA ---------- */
@@ -319,8 +330,9 @@ document.head.appendChild(ml);
 if('serviceWorker' in navigator&&/^https?:/.test(location.protocol))navigator.serviceWorker.register('sw.js').catch(()=>{});
 
 /* ---------- Tema ---------- */
-const THEMES=[['light','Ljust'],['dark','Mörkt'],['dusk','Skymning']];
+const THEMES=[['light','Ljust'],['dark','Mörkt'],['night','Nattblå']];
 function setTheme(t){
+  if(t==='dusk')t='night';
   if(!THEMES.some(x=>x[0]===t))t='light';
   document.documentElement.dataset.theme=t;try{localStorage.setItem('nk-theme',t)}catch(e){}
   const nm=THEMES.find(x=>x[0]===t)[1];$('theme').textContent='🌓 '+nm;$('theme').title='Byt tema (nu: '+nm+')';
@@ -1613,6 +1625,45 @@ $('fnFix').onclick=()=>{
   const paths=fnSelectedPaths();if(!paths.length)return;
   renQueue=paths;renQi=0;nextQueued();
 };
+
+/* ---------- Om och Sök uppdatering (M39, bygger på M19) ---------- */
+function extractVersion(html){const m=html.match(/const APP_VERSION\s*=\s*"([^"]+)"/);return m?m[1]:null}
+function isNewer(remote,local){
+  const r=remote.split('.').map(Number),l=local.split('.').map(Number);
+  for(let i=0;i<Math.max(r.length,l.length);i++){const a=r[i]||0,b=l[i]||0;if(a>b)return true;if(a<b)return false}
+  return false;
+}
+async function fetchRemote(){
+  try{
+    const res=await fetch(location.href.split('#')[0].split('?')[0]+'?_cb='+Date.now(),{cache:'no-store'});
+    if(!res.ok)return {error:'Servern svarade '+res.status+'.'};
+    const v=extractVersion(await res.text());
+    return v?{version:v}:{error:'Hittade ingen versionsrad i den hämtade filen.'};
+  }catch(e){return {error:'Kunde inte nå adressen.'}}
+}
+async function doUpdate(){
+  try{
+    if('serviceWorker' in navigator){const regs=await navigator.serviceWorker.getRegistrations();await Promise.all(regs.map(r=>r.unregister()))}
+    if('caches' in window){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)))}
+  }catch(e){}
+  location.reload();
+}
+$('aboutBtn').onclick=()=>{
+  $('aboutVer').textContent=APP_VERSION;$('aboutYr').textContent=new Date().getFullYear();
+  $('updMsg').textContent='';$('updGo').hidden=true;$('aboutDlg').showModal();
+};
+$('aboutClose').onclick=()=>$('aboutDlg').close();
+$('updBtn').onclick=async()=>{
+  $('updGo').hidden=true;
+  if(location.protocol==='file:'){$('updMsg').textContent='Appen körs som lokal fil, så den kan inte söka uppdatering själv. Öppna den från webbadressen eller hämta den senaste filen manuellt.';return}
+  $('updBtn').disabled=true;$('updMsg').textContent='Söker…';
+  const r=await fetchRemote();
+  $('updBtn').disabled=false;
+  if(r.error){$('updMsg').textContent='Kunde inte söka uppdatering. '+r.error;return}
+  if(isNewer(r.version,APP_VERSION)){$('updMsg').textContent='Ny version finns: '+r.version+' (du har '+APP_VERSION+').';$('updGo').hidden=false}
+  else $('updMsg').textContent='Du har den senaste versionen ('+APP_VERSION+').';
+};
+$('updGo').onclick=doUpdate;
 
 /* ---------- Dela app (QR) ---------- */
 function makeQR(text){
