@@ -204,10 +204,15 @@ dialog::backdrop{background:#0008}
 
 <div class="card" id="imgCard" hidden>
   <h2>Bilddubbletter</h2>
-  <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att jämföra tre mått: medelfärgen i 4×4 rutor, ljuset i 8×8 rutor och kanternas riktning. Alla tre måste stämma, och träffarna kontrolleras sedan med en detaljjämförelse, så olika motiv med liknande uppbyggnad sorteras bort. Toleransen anger högsta tillåtna avstånd. Inget laddas upp och inget ändras eller raderas.</p>
+  <p class="muted small" style="margin:0 0 10px">Jämför själva bilderna (jpg/png), inte bara namnen. Identiska filer hittas exakt. Liknande bilder hittas genom att jämföra tre mått: medelfärgen i 4×4 rutor, ljuset i 8×8 rutor och kanternas riktning. Alla tre måste stämma, och träffarna kontrolleras sedan med en detaljjämförelse, så olika motiv med liknande uppbyggnad sorteras bort. Därefter jämförs bildpunkterna efter inpassning: lika bilder visas som Dubbletter, olika bilder av samma motiv under Samma motiv. Toleransen anger högsta tillåtna avstånd. Inget laddas upp och inget ändras eller raderas.</p>
+  <div class="row" style="margin:0 0 14px">
+    <b>Visa:</b>
+    <label><input type="radio" name="clsMode" value="dup" checked> Dubbletter <span class="muted small">(samma bild, olika storlek eller beskärning)</span></label>
+    <label><input type="radio" name="clsMode" value="motif"> Samma motiv <span class="muted small">(olika bilder av samma sak)</span></label>
+  </div>
   <div class="refsec">
     <h3 style="margin:0 0 6px;font-size:1rem">Sök dubbletter till en vald bild</h3>
-    <p class="muted small" style="margin:0 0 8px">Välj en bild (den kan ligga var som helst). Appen letar sedan efter exakta kopior och liknande bilder i den valda katalogen. I läget Detaljer jämförs bildernas detaljer, så även utsnitt av samma bild, olika beskärning och svarta kanter hittas. Låg tolerans ger bara nästan identiska bilder med samma bildutsnitt, hög tolerans även annan beskärning och andra bilder från samma plats. Första gången läses alla bilder av, därefter går det snabbt.</p>
+    <p class="muted small" style="margin:0 0 8px">Välj en bild (den kan ligga var som helst). Appen letar sedan efter exakta kopior och liknande bilder i den valda katalogen. I läget Detaljer jämförs bildernas detaljer, så även utsnitt av samma bild, olika beskärning och svarta kanter hittas. Låg tolerans ger bara nästan identiska bilder med samma bildutsnitt, hög tolerans även annan beskärning och andra bilder från samma plats. Läget Snabb skiljer inte på samma bild och samma motiv. Första gången läses alla bilder av, därefter går det snabbt.</p>
     <div class="row">
       <button id="refPick">Välj bild…</button>
       <button id="refStop" hidden>Avbryt</button>
@@ -315,7 +320,7 @@ dialog::backdrop{background:#0008}
 </dialog>
 
 <script>
-const APP_VERSION = "1.32";
+const APP_VERSION = "1.33";
 const $=id=>document.getElementById(id);
 $('ver').textContent='v'+APP_VERSION;
 $('yr').textContent=new Date().getFullYear();
@@ -742,20 +747,28 @@ async function groupSimilar(){
   const token=++simToken,{recs,LAY,ok}=st,n=recs.length,T=+$('tol').value,chain=$('chain').checked,lim=tolThr(T);
   const FTS=st.FTS,minV=Math.max(10,minInl(T));if(!st.pc)st.pc=new Map();
   // två bilder är lika om helhetslayouten stämmer OCH detaljerna bekräftar det (sorterar bort olika motiv med liknande uppbyggnad)
-  const near=(i,j)=>{
+  const gate=(i,j)=>{
     if(!nearLayout(LAY,i,j,lim))return false;
     if(!FTS)return true;
     const a=FTS[i],b=FTS[j];if(!a||!b)return false;
     const key=i*n+j;let v=st.pc.get(key);
-    if(v===undefined){v=ftMatch(a,b,b.w,b.h);st.pc.set(key,v)}
-    return v>=minV;
+    if(v===undefined){v=ftMatchModel(a,b,b.w,b.h);st.pc.set(key,v)}
+    return v.inl>=minV;
+  };
+  const mode=clsMode();
+  // dubbletter = samma bild; samma motiv = olika bilder av samma sak (avgörs av en jämförelse av bildpunkterna efter inpassning)
+  const near=async(i,j)=>{
+    if(!gate(i,j))return false;
+    if(!FTS)return true;
+    const c=await classifyIdx(st,i,j),same=c?c.s>=SAME_T:null;
+    return mode==='dup'?same!==false:same===false;
   };
   let groups=[];
   if(chain){ // kedjor: A~B och B~C ger gruppen A,B,C
     const par=new Int32Array(n);for(let i=0;i<n;i++)par[i]=i;
     const find=x=>{while(par[x]!==x){par[x]=par[par[x]];x=par[x]}return x};
     for(let i=0;i<n;i++){
-      if(ok[i]){for(let j=i+1;j<n;j++){if(ok[j]&&near(i,j)){const a=find(i),b=find(j);if(a!==b)par[a]=b}}}
+      if(ok[i]){for(let j=i+1;j<n;j++){if(ok[j]&&await near(i,j)){const a=find(i),b=find(j);if(a!==b)par[a]=b}}}
       if(i%40===0){prog('Jämför och kontrollerar bilder… '+i+' / '+n,i,n);await tick();if(token!==simToken)return}
     }
     const m=new Map();
@@ -766,7 +779,7 @@ async function groupSimilar(){
     for(let i=0;i<n;i++){
       if(ok[i]&&!taken[i]){
         const g=[i];taken[i]=1;
-        for(let j=i+1;j<n;j++){if(ok[j]&&!taken[j]&&near(i,j)){g.push(j);taken[j]=1}}
+        for(let j=i+1;j<n;j++){if(ok[j]&&!taken[j]&&await near(i,j)){g.push(j);taken[j]=1}}
         groups.push(g);
       }
       if(i%40===0){prog('Jämför och kontrollerar bilder… '+i+' / '+n,i,n);await tick();if(token!==simToken)return}
@@ -1285,9 +1298,9 @@ function ftExtract(canvases){
   return {n,xs:Uint16Array.from(xs),ys:Uint16Array.from(ys),lv:Uint8Array.from(lvs),desc};
 }
 function ftPop(x){x=x-((x>>>1)&0x55555555);x=(x&0x33333333)+((x>>>2)&0x33333333);return Math.imul((x+(x>>>4))&0x0F0F0F0F,0x01010101)>>>24}
-// Antal geometriskt konsekventa gemensamma detaljer mellan två bilder (likformighetstransform: skala, liten rotation, förskjutning)
-function ftMatch(A,B,wB,hB){
-  if(A.n<8||B.n<8)return 0;
+function ftMatchModel(A,B,wB,hB){
+  const none={inl:0};
+  if(A.n<8||B.n<8)return none;
   const ad=A.desc,bd=B.desc,pairs=[];
   for(let i=0;i<A.n;i++){
     let b1=999,b2=999,bj=-1;const ai=i*8;
@@ -1300,23 +1313,78 @@ function ftMatch(A,B,wB,hB){
     }
     if(bj>=0&&b1<=90&&b1<0.8*b2)pairs.push([A.xs[i],A.ys[i],B.xs[bj],B.ys[bj]]);
   }
-  const N=pairs.length;if(N<6)return 0;
+  const N=pairs.length;if(N<6)return none;
   const tol=Math.max(6,0.03*Math.max(wB,hB)),tol2=tol*tol;
-  let best=0,seed=7;const rnd=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296};
+  let best=0,bm=null,seed=7;const rnd=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296};
   for(let it=0;it<250;it++){
-    const p=pairs[Math.floor(rnd()*N)];let q=pairs[Math.floor(rnd()*N)];
+    const p=pairs[Math.floor(rnd()*N)];const q=pairs[Math.floor(rnd()*N)];
     if(p===q)continue;
     const ax=q[0]-p[0],ay=q[1]-p[1],bx=q[2]-p[2],by=q[3]-p[3],den=ax*ax+ay*ay;
     if(den<400)continue;
     const cr=(bx*ax+by*ay)/den,ci=(by*ax-bx*ay)/den,s=Math.hypot(cr,ci);
     if(s<0.35||s>2.8)continue;
-    if(Math.abs(Math.atan2(ci,cr))>0.45)continue; // högst ca 25 graders rotation
+    if(Math.abs(Math.atan2(ci,cr))>0.45)continue;
     const tx=p[2]-(cr*p[0]-ci*p[1]),ty=p[3]-(ci*p[0]+cr*p[1]);
     let inl=0;
     for(let k=0;k<N;k++){const m=pairs[k],ex=cr*m[0]-ci*m[1]+tx-m[2],ey=ci*m[0]+cr*m[1]+ty-m[3];if(ex*ex+ey*ey<=tol2)inl++}
-    if(inl>best){best=inl;if(best>0.85*N)break}
+    if(inl>best){best=inl;bm=[cr,ci,tx,ty];if(best>0.85*N)break}
   }
-  return best;
+  if(!bm)return none;
+  // förfining: minsta kvadrat på inliers, två varv
+  let [cr,ci,tx,ty]=bm;
+  for(let round=0;round<2;round++){
+    const t2=round===0?tol2:Math.max(9,tol2/4),inl=[];
+    for(const m of pairs){const ex=cr*m[0]-ci*m[1]+tx-m[2],ey=ci*m[0]+cr*m[1]+ty-m[3];if(ex*ex+ey*ey<=t2)inl.push(m)}
+    if(inl.length<4)break;
+    let ma=[0,0],mb=[0,0];for(const m of inl){ma[0]+=m[0];ma[1]+=m[1];mb[0]+=m[2];mb[1]+=m[3]}
+    ma=[ma[0]/inl.length,ma[1]/inl.length];mb=[mb[0]/inl.length,mb[1]/inl.length];
+    let nr=0,ni=0,dn=0;
+    for(const m of inl){const ax=m[0]-ma[0],ay=m[1]-ma[1],bx=m[2]-mb[0],by=m[3]-mb[1];nr+=ax*bx+ay*by;ni+=ax*by-ay*bx;dn+=ax*ax+ay*ay}
+    if(dn<1)break;
+    cr=nr/dn;ci=ni/dn;tx=mb[0]-(cr*ma[0]-ci*ma[1]);ty=mb[1]-(ci*ma[0]+cr*ma[1]);
+  }
+  return {inl:best,cr,ci,tx,ty};
+}
+
+function ftMatch(A,B,wB,hB){return ftMatchModel(A,B,wB,hB).inl}
+// ---- samma bild eller samma motiv? Jämför bildpunkterna efter inpassning (modellen från ftMatchModel) ----
+const SAME_T=0.85; // likhet (0-1) från vilken två bilder räknas som samma bild
+function ftBlur1(g,w,h){
+  const dst=new Uint8Array(g.length);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    let s0=0,c=0;
+    for(let dy=-1;dy<=1;dy++){const yy=y+dy;if(yy<0||yy>=h)continue;for(let dx=-1;dx<=1;dx++){const xx=x+dx;if(xx<0||xx>=w)continue;s0+=g[yy*w+xx];c++}}
+    dst[y*w+x]=s0/c;
+  }
+  return dst;
+}
+function ftEdge(g,w,h){
+  const e=new Uint8Array(g.length);
+  for(let y=1;y<h-1;y++)for(let x=1;x<w-1;x++){const gx=g[y*w+x+1]-g[y*w+x-1],gy=g[(y+1)*w+x]-g[(y-1)*w+x];e[y*w+x]=Math.min(255,Math.hypot(gx,gy))}
+  return e;
+}
+function ftSample(g,w,h,x,y){
+  const x0=Math.floor(x),y0=Math.floor(y),fx=x-x0,fy=y-y0,i=y0*w+x0;
+  return (g[i]*(1-fx)+g[i+1]*fx)*(1-fy)+(g[i+w]*(1-fx)+g[i+w+1]*fx)*fy;
+}
+function ftNcc(a,b){
+  const n=a.length;let ma=0,mb=0;for(let i=0;i<n;i++){ma+=a[i];mb+=b[i]}ma/=n;mb/=n;
+  let sab=0,saa=0,sbb=0;for(let i=0;i<n;i++){const x=a[i]-ma,y=b[i]-mb;sab+=x*y;saa+=x*x;sbb+=y*y}
+  return (saa<1||sbb<1)?-1:sab/Math.sqrt(saa*sbb);
+}
+// GA/GB: {g,e,w,h} (grå- och kantplan i bilddragens koordinater). Returnerar {s,ncc,ed}; s=-1 om bilderna knappt överlappar.
+function ftSimilarity(GA,GB,m){
+  const W=160,H=120,mx=GA.w*0.06,my=GA.h*0.06,la=[],lb=[],ea=[],eb=[];
+  for(let gy=0;gy<H;gy++)for(let gx=0;gx<W;gx++){
+    const x=mx+(GA.w-2*mx)*(gx+0.5)/W,y=my+(GA.h-2*my)*(gy+0.5)/H;
+    const bx=m.cr*x-m.ci*y+m.tx,by=m.ci*x+m.cr*y+m.ty;
+    if(bx<1||by<1||bx>GB.w-3||by>GB.h-3)continue;
+    la.push(ftSample(GA.g,GA.w,GA.h,x,y));lb.push(ftSample(GB.g,GB.w,GB.h,bx,by));
+    ea.push(ftSample(GA.e,GA.w,GA.h,x,y));eb.push(ftSample(GB.e,GB.w,GB.h,bx,by));
+  }
+  if(la.length<0.2*W*H)return {s:-1};
+  const ncc=ftNcc(la,lb),ed=ftNcc(ea,eb);
+  return {s:(ncc<0||ed<0)?-1:Math.min(ncc,ed),ncc,ed};
 }
 
 function ftBuildCanvases(bmp){
@@ -1346,6 +1414,37 @@ async function featAll(){
   try{const db=await idb();return await new Promise((res,rej)=>{const m=new Map(),c=db.transaction('feat').objectStore('feat').openCursor();c.onsuccess=()=>{const cur=c.result;if(cur){m.set(cur.key,cur.value);cur.continue()}else res(m)};c.onerror=()=>rej(c.error)})}catch(e){return new Map()}
 }
 const minInl=T=>Math.round(26-1.15*T);
+async function grayFromFile(file){ // samma ruta som bilddragen (FT_SIDE), för inpassad jämförelse
+  let bmp;
+  try{bmp=await createImageBitmap(file,{resizeWidth:FT_SIDE,resizeQuality:'medium'})}
+  catch(e){bmp=await createImageBitmap(file)}
+  const k=Math.min(1,FT_SIDE/Math.max(bmp.width,bmp.height));
+  const w=Math.max(8,Math.round(bmp.width*k)),h=Math.max(8,Math.round(bmp.height*k));
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+  const cx=cv.getContext('2d',{willReadFrequently:true});cx.fillStyle='#fff';cx.fillRect(0,0,w,h);cx.drawImage(bmp,0,0,w,h);if(bmp.close)bmp.close();
+  const d=cx.getImageData(0,0,w,h).data,g=new Uint8Array(w*h);
+  for(let i=0;i<g.length;i++)g[i]=(d[i*4]*77+d[i*4+1]*150+d[i*4+2]*29)>>8;
+  const gb=ftBlur1(g,w,h);
+  return {g:gb,e:ftEdge(gb,w,h),w,h};
+}
+const grayCache=new Map();
+async function grayOf(rec){
+  let g=grayCache.get(rec.key);
+  if(g){grayCache.delete(rec.key);grayCache.set(rec.key,g);return g}
+  g=await grayFromFile(rec.file);grayCache.set(rec.key,g);
+  if(grayCache.size>150)grayCache.delete(grayCache.keys().next().value);
+  return g;
+}
+const clsMode=()=>document.querySelector('input[name=clsMode]:checked').value;
+async function classifyIdx(st,i,j){ // samma bild eller samma motiv för ett par i katalogsökningen (sparas per par)
+  const key=i*st.recs.length+j;if(!st.cls)st.cls=new Map();
+  let c=st.cls.get(key);if(c!==undefined)return c;
+  const mm=st.pc&&st.pc.get(key);c=null;
+  if(mm&&mm.inl){
+    try{const sim=ftSimilarity(await grayOf(st.recs[i]),await grayOf(st.recs[j]),mm);if(sim.s>=0)c=sim}catch(e){c=null}
+  }
+  st.cls.set(key,c);return c;
+}
 const refGate=T=>0.15*Math.pow(1.7,T); // högsta tillåtna skillnad i helhetslayout (utsnitt/beskärning) vid tolerans T
 async function analyseFile(file,needFp,needFt){ // en enda avkodning ger både fingeravtryck och detaljer
   let bmp;
@@ -1459,12 +1558,16 @@ function renderRef(){
   const T=+$('tol1').value,el=$('refRes'),idx=[];
   for(let i=0;i<st.recs.length;i++){
     if(st.self[i])continue;
-    if(st.mode==='detail'){if(st.ident[i]||(st.inl[i]>=minInl(T)&&st.gd[i]<=refGate(T)))idx.push(i)}
+    if(st.mode==='detail'){
+      const md=clsMode();
+      if(st.ident[i]){if(md==='dup')idx.push(i)}
+      else if(st.inl[i]>=minInl(T)&&st.gd[i]<=refGate(T)){const same=st.cls[i]>=SAME_T;if(md==='dup'?same:!same)idx.push(i)}
+    }
     else if(st.ident[i]||(st.refOk&&st.ok[i]&&st.ldist[i]<=tolThr(T)))idx.push(i);
   }
   idx.sort((a,b)=>st.ident[b]-st.ident[a]||(st.mode==='detail'?st.inl[b]-st.inl[a]:st.ldist[a]-st.ldist[b])||st.recs[a].path.localeCompare(st.recs[b].path,'sv',{numeric:true}));
   const note=(st.mode==='detail'||st.refOk)?'':'<p class="small muted">Den valda bilden är nästan enfärgad eller kunde inte läsas av, så bara exakt likadana filer kan hittas.</p>';
-  const none=!idx.length,noneMsg='<span class="chip ok">Inga dubbletter hittades vid tolerans '+T+(st.mode==='detail'?' (minst '+minInl(T)+' gemensamma detaljer)':'')+'</span>';
+  const none=!idx.length,noneMsg='<span class="chip ok">'+(st.mode==='detail'&&clsMode()==='motif'?'Inga bilder med samma motiv hittades':'Inga dubbletter hittades')+' vid tolerans '+T+(st.mode==='detail'?' (minst '+minInl(T)+' gemensamma detaljer)':'')+'</span>';
   const refP=st.refPath||st.file.name,refRec={file:st.file,path:refP,name:refP.split('/').pop(),size:st.file.size};
   const list=[refRec].concat(idx.map(i=>st.recs[i]));
   el.innerHTML=note+(none?noneMsg:'')+'<div class="grp"><h3>'+(none?'Vald bild':'Träffar för vald bild')+' · '+list.length+' filer</h3><div class="pics"></div></div>';
@@ -1477,7 +1580,7 @@ function renderRef(){
     if(k===0){nm=st.refPath?markUp(refRec.path,refRec.name,[]):esc(r.name);badge='<span class="badge">vald bild</span>'}
     else{
       const i=idx[k-1];nm=markUp(r.path,r.name,[]);
-      badge=st.ident[i]?'<span class="badge">identisk</span>':(st.mode==='detail'?'<span class="badge" title="Antal detaljer i bilderna som sitter på samma plats i förhållande till varandra (efter skala och förskjutning)">'+st.inl[i]+' detaljer</span>':'<span class="badge" title="Avstånd mellan bilderna (0 = lika). Toleransen anger högsta tillåtna avstånd.">avstånd '+st.ldist[i].toFixed(2).replace('.',',')+'</span>');
+      badge=st.ident[i]?'<span class="badge">identisk</span>':(st.mode==='detail'?'<span class="badge" title="Antal detaljer som sitter på samma plats efter skala och förskjutning. Siffran efteråt är hur lika bildpunkterna är efter inpassning (1 = helt lika); från '+SAME_T.toString().replace('.',',')+' räknas det som samma bild.">'+st.inl[i]+' detaljer · '+(st.cls[i]>=SAME_T?'samma bild':'samma motiv')+(st.cls[i]>=0?' '+st.cls[i].toFixed(2).replace('.',','):'')+'</span>':'<span class="badge" title="Avstånd mellan bilderna (0 = lika). Toleransen anger högsta tillåtna avstånd.">avstånd '+st.ldist[i].toFixed(2).replace('.',',')+'</span>');
     }
     p.innerHTML='<canvas width="190" height="140"></canvas><div class="meta">'+nm+badge+'</div><div class="dim meta">'+fmtSize(r.size)+'</div>'
       +(k===0?(st.refPath?'<div class="refact"><button class="edit" data-act="ren" data-path="'+escA(st.refPath)+'">✎ Byt namn</button><button class="edit" data-act="del" data-path="'+escA(st.refPath)+'">Flytta till _Raderade</button></div>':'<div class="dim meta">Ligger utanför vald katalog, kan inte döpas om eller flyttas härifrån.</div>'):'');
@@ -1538,13 +1641,14 @@ async function runRefDetail(file){
     const recs=await refBuildRecs(),n=recs.length;
     const A=await ensureAnalysis(recs,refShow,()=>refAbort);
     if(A.aborted)throw {aborted:true};
-    const inl=new Uint16Array(n),gd=new Float32Array(n),ident=new Uint8Array(n),self=new Uint8Array(n);
+    const inl=new Uint16Array(n),gd=new Float32Array(n),ident=new Uint8Array(n),self=new Uint8Array(n),models=new Array(n),cls=new Float32Array(n).fill(-1);
     const cache=(await kvGet('imgcache'))||{ph:{},sha:{}},refFlat=R.fp[0]!==0,rv=R.fp.subarray(1);
     let last=0;
     for(let i=0;i<n;i++){
       const r=recs[i];
       if(r.deleted||(r.size===file.size&&r.name===file.name&&r.file&&r.file.lastModified===file.lastModified)){self[i]=1;if(!r.deleted)refPath=r.path;continue}
-      const f=A.FTS[i];if(f)inl[i]=ftMatch(R.ft,f,f.w,f.h);
+      const f=A.FTS[i],mm=f?ftMatchModel(R.ft,f,f.w,f.h):null;
+      if(mm){inl[i]=mm.inl;if(mm.inl>=10)models[i]=mm}
       gd[i]=(!refFlat&&A.ok[i])?layoutDist(A.LAY,i,0,rv):0;
       if(r.size===file.size){
         try{const sh=r.sha||cache.sha[r.key]||(cache.sha[r.key]=await sha256(r.file));if(sh===rsha)ident[i]=1}catch(e){}
@@ -1553,7 +1657,18 @@ async function runRefDetail(file){
       if(refAbort)throw {aborted:true};
     }
     await kvSet('imgcache',cache);
-    refState={mode:'detail',file,refPath,recs,inl,gd,ident,self};
+    // samma bild eller samma motiv: jämför bildpunkterna efter inpassning för de som matchat
+    const cand=[];for(let i=0;i<n;i++)if(models[i]&&!self[i]&&!ident[i])cand.push(i);
+    if(cand.length){
+      const GR=await grayFromFile(file);last=0;
+      for(let c=0;c<cand.length;c++){
+        const i=cand[c];
+        try{cls[i]=ftSimilarity(GR,await grayOf(recs[i]),models[i]).s}catch(e){cls[i]=-1}
+        if(Date.now()-last>80){last=Date.now();refShow('Kontrollerar bildpunkter… '+c+' / '+cand.length,c,cand.length);await tick()}
+        if(refAbort)throw {aborted:true};
+      }
+    }
+    refState={mode:'detail',file,refPath,recs,inl,gd,cls,ident,self};
     renderRef();refShow('Klart.',1,1);
   }catch(err){
     if(err&&err.aborted)refShow('Avbrutet. Det som hunnit läsas är sparat till nästa gång.',0,1);
@@ -1573,6 +1688,11 @@ $('skipList').addEventListener('click',e=>{
   const b=e.target.closest('button.num');if(!b)return;
   const old=b.textContent;
   navigator.clipboard.writeText(b.dataset.n).then(()=>{b.classList.add('done');b.textContent='Kopierat '+b.dataset.n+' ✓';setTimeout(()=>{b.classList.remove('done');b.textContent=old},1100)});
+});
+
+document.querySelectorAll('input[name=clsMode]').forEach(r=>r.onchange=()=>{
+  if(refState&&refState.mode==='detail')renderRef();
+  if(imgState&&!$('imgGo').disabled&&!imgState.partial)groupSimilar();
 });
 
 /* ---------- Sök i filnamn ---------- */
